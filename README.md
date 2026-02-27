@@ -49,4 +49,6 @@ Skeleton outline of 1Shot API skills
         - subscription payments
     - Server-side integration
         - paylinks
-    - Agent Wallets
+    - MCP
+        - agent wallets
+        - generate paylinks
