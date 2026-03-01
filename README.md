@@ -1,7 +1,10 @@
 # skills
-Skeleton outline of 1Shot API skills
+This is a skeleton outline of 1Shot API skills. This Skill is intended to guide a coding agent in building a typescript project that leverages 1Shot API for onchain reads and transaction management. 1Shot API has native support for the [MetaMask Delegation Framework](https://github.com/MetaMask/delegation-framework) enabling transactions that meet specific requirements to be executed on a user's behalf even when they are not online. 
 
-1. Server Wallets
+This skill specifically helps agents use the [1Shot API node SDK](https://github.com/1Shot-API/1Shot-API-SDK/tree/main/clients/node) for building robusted onchain applications.
+
+1. Server Wallets Skill
+    - list available EVM networks
     - create server wallet
     - list server wallets
     - update server wallet metadata
@@ -10,12 +13,13 @@ Skeleton outline of 1Shot API skills
         - permit2
             - authorize permit2
     - delegations
-        - create delegation
-        - list delegations
-        - redelegate
-            - from stored
-            - from provided
-2. Smart Contracts
+        - Metamask Smart Accounts Kit
+        - create delegation (store in 1Shot API)
+        - list stored delegations
+        - redelegate from server wallet
+            - from stored delegation
+            - from provided delegation
+2. Smart Contracts Skill
     - search smart contracts
     - Assure methods associated w/ smart contract
     - functions
@@ -27,21 +31,21 @@ Skeleton outline of 1Shot API skills
         - listing imported events
         - update imported event details
         - querying events w/ indexed arguments
-3. Executing Transactions
+3. Implementing Transaction Execution Skill
     - single execute
-    - delegated single execute
     - batch execute
+    - delegated single execute
     - delegated batch execute
-4. Webhooks
+4. Implementing Webhooks Skill (api not ready yet)
     - Create a webhook
         - endpoint
         - triggers
         - public key & sig verification
     - update a webhook
     - delete a webhook
-5. x402
-    - facilitator
-6. 1ShotPay
+5. x402 Facilitator Skill
+    - setting up the 1Shot API facilitator
+6. 1ShotPay Integration Skill
     - client-side integration
         - one-time payments
             - x402Fetch
@@ -49,6 +53,6 @@ Skeleton outline of 1Shot API skills
         - subscription payments
     - Server-side integration
         - paylinks
-    - MCP
+    - 1ShotPay MCP capabilities
         - agent wallets
         - generate paylinks
