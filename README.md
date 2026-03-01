@@ -3,6 +3,32 @@ This is a skeleton outline of 1Shot API skills. This Skill is intended to guide 
 
 This skill specifically helps agents use the [1Shot API node SDK](https://github.com/1Shot-API/1Shot-API-SDK/tree/main/clients/node) for building robusted onchain applications.
 
+## Install and use
+
+Install this skill from your published GitHub repository with `npx skills add`:
+
+```bash
+npx skills add <github-owner>/<github-repo>/1shot-api
+```
+
+Example (replace with your actual repo path):
+
+```bash
+npx skills add your-org/skills/1shot-api
+```
+
+Use the skill by prompting your coding agent with 1Shot API tasks, for example:
+
+- "Set up server wallet creation and listing with the 1Shot API Node SDK."
+- "Simulate a smart contract write and query indexed events."
+- "Implement delegated batch transaction execution using stored delegations."
+
+This repository contains the skill at:
+
+```text
+1shot-api/
+```
+
 1. Server Wallets Skill
     - list available EVM networks
     - create server wallet
