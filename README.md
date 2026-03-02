@@ -2,6 +2,7 @@
 Skeleton outline of 1Shot API skills
 
 1. Server Wallets
+    - list chains
     - create server wallet
     - list server wallets
     - update server wallet metadata
