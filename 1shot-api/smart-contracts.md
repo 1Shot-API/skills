@@ -37,7 +37,7 @@ Assume you have:
 - `walletId`: server wallet UUID to associate with imported methods when needed
 - `chainId`: target chain (for example, `8453` for Base mainnet)
 
-## 1) Search Smart Contracts
+## 1) Search Smart Contracts from Prompt Library
 
 Search contracts using natural language or known identifiers.
 
@@ -48,7 +48,7 @@ const prompts = await client.contractMethods.search("USDC on Base", {
 // prompts[].promptId, prompts[].name, etc.
 ```
 
-## 2) Assure Methods Associated With Smart Contract
+## 2) Assure Methods Associated With an Existing Smart Contract Prompt
 
 Ensure methods are imported/available for a contract and business.
 
@@ -58,10 +58,32 @@ const methods = await client.contractMethods.assureContractMethodsFromPrompt(
   {
     chainId: 8453,
     contractAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    walletId,
+    walletId, // default wallet to link to methods, wallet must be for same network id
     promptId: "optional_prompt_uuid", // optional; omit to use highest-ranked prompt
   }
 );
+```
+
+### Create a New Contract Method (Without Prompt Library)
+
+Define a contract method from scratch by supplying the ABI-style details:
+
+```ts
+// Create a new contract method
+const newMethod = await client.contractMethods.create("your_business_id", {
+  chainId: 1,
+  contractAddress: "0x...",
+  walletId: "your_wallet_id",
+  name: "Transfer Tokens",
+  description: "Transfers ERC20 tokens to a recipient",
+  functionName: "transfer",
+  stateMutability: "nonpayable",
+  inputs: [
+    { name: "recipient", type: "address", index: 0 },
+    { name: "amount", type: "uint256", index: 1 },
+  ],
+  outputs: [],
+});
 ```
 
 ## 3) Functions
@@ -71,25 +93,34 @@ const methods = await client.contractMethods.assureContractMethodsFromPrompt(
 ```ts
 const { response, page, pageSize, totalResults } =
   await client.contractMethods.list(businessId, {
-    chainId: 8453,
-    contractAddress: "0x...",
-    page: 1,
-    pageSize: 20,
-    status: "live",
+    chainId: 8453, // filter on the network id
+    contractAddress: "0x...", // filter on specific contract addresses
+    page: 1, // pagination
+    pageSize: 20, // page size
+    status: "live", // filter on archived methods, "live" is default
   });
 ```
 
 ### Update Imported Function Details
 
+All parameters are optional; only include the fields you want to change.
+
 ```ts
 const updated = await client.contractMethods.update("your_contract_method_id", {
+  chainId: 8453,           // network id for the method
+  contractAddress: "0x...", // contract address
+  walletId: "another_wallet_id", // default wallet to use when executing this method
   name: "Transfer USDC",
   description: "Sends USDC to a recipient",
-  walletId: "another_wallet_id",
+  functionName: "transfer", // ABI function name, only edit if the abi is wrong and needs to be corrected
+  stateMutability: "nonpayable", // ContractMethodStateMutability: "view" | "pure" | "nonpayable" | "payable", only edit if the abi is incorrect and needs to be changed
+  callbackUrl: "https://your-app.com/callback", // for receiving real-time webhook callbacks on transaction status
 });
 ```
 
 ### Read From Read Functions
+
+For smart contract view functions:
 
 ```ts
 const balance = await client.contractMethods.read(
@@ -102,6 +133,8 @@ const balance = await client.contractMethods.read(
 
 ### Simulate Write Functions
 
+Test if a write method transaction is likely to succeed before execution (useful for write functions that require signature inputs, the result can contain event logs that help explain why a transaction would fail):
+
 ```ts
 const result = await client.contractMethods.test(
   "your_contract_method_id",
@@ -109,6 +142,18 @@ const result = await client.contractMethods.test(
   { value: "0" }
 );
 // result.success, result.data, etc.
+```
+
+### Estimate Gas
+
+Get an estimate for the amount of gas used for a transaction before execution:
+
+```ts
+// Estimate gas for an execution
+const estimate = await client.contractMethods.estimate(
+  "your_contract_method_id",
+  { amount: "1000000", recipient: "0x..." }
+);
 ```
 
 ## 4) Events

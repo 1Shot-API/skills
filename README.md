@@ -53,6 +53,7 @@ This repository contains the skill at:
         - update imported function details
         - reading from read functions
         - simulating write functions
+        - estimating gas cost
     - events
         - listing imported events
         - update imported event details

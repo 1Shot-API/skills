@@ -29,7 +29,7 @@ import { OneShotClient } from "@1shotapi/client-sdk";
 const client = new OneShotClient({
   apiKey: process.env.ONESHOT_API_KEY!,
   apiSecret: process.env.ONESHOT_API_SECRET!,
-  // baseUrl: "https://api.staging.1shotapi.com/v0", // optional
+  // baseUrl: "https://api.staging.1shotapi.com/v0", // optional for 1Shot API dev team
 });
 ```
 
