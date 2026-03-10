@@ -172,6 +172,8 @@ const { response, page, pageSize, totalResults } =
 
 ### Redelegate From Stored Delegation
 
+This is useful for redelegating a delegation given to one 1Shot API server wallet to another server wallet or perhaps a wallet held by the end user. The delegation permissions remain unchanged.
+
 ```ts
 const { parent, redelegation } = await client.wallets.redelegate(
   "existing_delegation_id",
@@ -182,42 +184,18 @@ const { parent, redelegation } = await client.wallets.redelegate(
 
 ### Redelegate From Provided Delegation
 
+Same usage strategy as for stored delegations. The provided delegation `to` address must be the same address as the server wallet that will sign the redelegation. This is useful for one-time use delegations that do not benefit from being stored in 1Shot API.
+
 ```ts
 const { parent, redelegation } =
   await client.wallets.redelegateWithDelegationData(
-    "escrow_wallet_id_that_is_current_delegate",
+    "server_wallet_id_that_is_current_delegate",
     {
       delegationData: "<parent delegation JSON string>",
       delegateAddress: "0xNewDelegate...",
     }
   );
 ```
-
-## Chain Models (From Your SDK Types)
-
-```ts
-type ListChains = {
-  pageSize?: number | null;
-  page?: number | null;
-};
-
-type ChainInfo = {
-  name: string;
-  chainId: number;
-  averageBlockMiningTime: number;
-  nativeCurrency: { name: string; symbol: string; decimals: number };
-  type: "Mainnet" | "Testnet" | "Hardhat";
-};
-```
-
-Your implementation validates params and responses with:
-
-- `listChainsSchema`
-- `chainListSchema`
-- `getFeesSchema`
-- `gasFeesSchema`
-
-Keep this Zod-first validation pattern for all wallet- and chain-adjacent calls.
 
 ## Safety Checks
 
