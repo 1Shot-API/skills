@@ -32,6 +32,14 @@ Use this skill when building a TypeScript project on top of the 1Shot API Node S
   - typed function signatures
   - basic error handling and retries
 
+## Error handling
+
+The client can throw:
+
+- **RequestError** – HTTP request failures
+- **ZodError** – Invalid parameters (from schema validation)
+- **InvalidSignatureError** – Invalid webhook signatures (from `verifyWebhook`)
+
 ## Guides
 
 - Server wallets: see [server-wallets.md](server-wallets.md)
