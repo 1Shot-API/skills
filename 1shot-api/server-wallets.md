@@ -148,13 +148,15 @@ Delegations are the part that maps to MetaMask Smart Accounts Kit workflows: you
 
 ### Create Delegation (store in 1Shot API)
 
+`startTime`, `endTime`, `contractAddresses` and `methods` are metadata used by 1Shot API to pick an appropriate delegation when using the delegator address as the identifier when executing as delegator.
+
 ```ts
 const delegation = await client.wallets.createDelegation(walletId, {
-  delegationData: "<signed delegation payload from your signer>",
-  startTime: Math.floor(Date.now() / 1000),
-  endTime: Math.floor(Date.now() / 1000) + 86400 * 7, // 7 days
-  contractAddresses: ["0x..."],
-  methods: ["transfer", "approve"],
+  delegationData: JSON.stringify(singed_delegation_from_your_signer),
+  startTime: Math.floor(Date.now() / 1000),           // used for metadata filtering
+  endTime: Math.floor(Date.now() / 1000) + 86400 * 7, // used for metadata filtering
+  contractAddresses: ["0x..."],                       // used for metadata filtering
+  methods: ["transfer", "approve"],                   // used for metadata filtering
 });
 ```
 

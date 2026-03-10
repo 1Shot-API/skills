@@ -25,12 +25,6 @@ Use this skill when building a TypeScript project on top of the 1Shot API Node S
 - Use TypeScript-first examples.
 - Keep implementation split into small functions rather than large scripts.
 - Surface security constraints early (keys, signatures, replay protection, verification).
-- If an endpoint detail is unknown, state assumptions and mark TODOs clearly.
-- When the user asks to scaffold code, include:
-  - dependency list
-  - environment variable contract
-  - typed function signatures
-  - basic error handling and retries
 
 ## Error handling
 
