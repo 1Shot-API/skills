@@ -37,7 +37,7 @@ Use this skill when building a TypeScript project on top of the 1Shot API Node S
 - Server wallets: see [server-wallets.md](server-wallets.md)
 - Smart contracts: see [smart-contracts.md](smart-contracts.md)
 - Transaction execution: see [transaction-execution.md](transaction-execution.md)
-- Webhooks (dummy draft): see [webhooks-dummy.md](webhooks-dummy.md)
+- Webhooks: see [webhooks.md](webhooks.md)
 - x402 facilitator: see [x402-facilitator.md](x402-facilitator.md)
 - 1ShotPay integration: see [oneshotpay-integration.md](oneshotpay-integration.md)
 
