@@ -97,7 +97,7 @@ if (response.ok) {
 
 ### Subscription (delegation)
 
-Pass at least one of `amountPerDay`, `amountPerWeek`, or `amountPerMonth`. Store the resulting delegation in 1Shot API and execute on an appropriate schedule using `executeAsDelegator` or batch many subscription payments using `executeBatchAsDelegator`:
+Pass at least one of `amountPerDay`, `amountPerWeek`, or `amountPerMonth`. Store the resulting delegation in 1Shot API using `wallets.createDelegation` and execute on an appropriate schedule using `contractMethods.executeAsDelegator` or batch many subscription payments using `contractMethods.executeBatchAsDelegator`:
 
 ```ts
 const delegation = await wallet

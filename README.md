@@ -5,17 +5,19 @@ This skill specifically helps agents use the [1Shot API node SDK](https://github
 
 ## Install and use
 
-Install this skill from your published GitHub repository with `npx skills add`:
+Install the 1shot-api skill from this repository:
 
 ```bash
-npx skills add <github-owner>/<github-repo>/1shot-api
+npx skills add 1Shot-API/skills/1shot-api
 ```
 
-Example (replace with your actual repo path):
+To update the skill to the latest version after new releases:
 
 ```bash
-npx skills add your-org/skills/1shot-api
+npx skills update
 ```
+
+(This updates all installed skills; re-run `npx skills add 1Shot-API/skills/1shot-api` to refresh only this skill.)
 
 Use the skill by prompting your coding agent with 1Shot API tasks, for example:
 
