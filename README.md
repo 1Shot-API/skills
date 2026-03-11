@@ -85,3 +85,10 @@ This repository contains the skill at:
     - 1ShotPay MCP capabilities
         - agent wallets
         - generate paylinks
+
+
+## TODOs
+
+- execution simulation for batch and delegated transactions
+- gasLimit for `execute`
+- re-fork x402 and create new facilitator client
