@@ -12,6 +12,10 @@ Use this guide when the user asks for Smart Contract interactions with the 1Shot
 - imported event management
 - event querying with indexed arguments
 
+## MCP Tool
+
+When building an agent or product that will interact with specific smart contract functions and events, use the 1Shot API MCP server to manage smart contract functions directly in the developers account. 
+
 ## SDK Setup
 
 ```bash

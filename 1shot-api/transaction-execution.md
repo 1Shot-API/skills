@@ -2,13 +2,9 @@
 
 Use this guide when the user asks for transaction execution with the 1Shot Node SDK.
 
-This section is aligned to the SDK README Executing Transactions methods and naming.
-
-Leverage the memo field when implementing transaction executions so that the transaction history is semantially searchable and the account owner will know why transactions where submitted. 
+Leverage the memo field when implementing transaction executions so that the transaction history is semantically searchable and the account owner will know why transactions where submitted. 
 
 ## Topics Covered
-
-From the repository outline:
 
 - single execute
 - batch execute
@@ -45,13 +41,14 @@ All execution methods (single, batch, delegated) accept an options object. Every
 | `walletId` | `string` (UUID) \| `null` | Escrow wallet that will run the contract method. If omitted, the contract method’s default escrow wallet is used. |
 | `memo` | `string` \| `null` | Note about why the execution was done (e.g. "Payout #123"), or structured data (e.g. JSON) for the user’s system. Makes transaction history semantically searchable. |
 | `value` | `string` \| `null` | Amount of native token (e.g. ETH) to send with the call. Only for **payable** methods; sending value for a nonpayable method will error. |
-| `contractAddress` | `string` \| `null` | Override the smart contract address for this execution only. |
+| `contractAddress` | `string` \| `null` | Override the target smart contract address for this execution only. |
 | `authorizationList` | `array` \| `null` | ERC-7702 authorizations. Required when using ERC-7702; must include at least one authorization, upgrades an EOA to mount smart contract logic. |
-| `authorizationDataAddress` | `string` \| `null` | ERC-7702 contract address to upgrade the executing Wallet to (instead of an external EOA). Server generates signature and nonce for the authorization. If set, you must also set `contractAddress` to the Wallet address or the request will error. |
+| `authorizationDataAddress` | `string` \| `null` | ERC-7702 custom contract address to upgrade the executing server wallet to (instead of an external EOA). The server wallet will generate a signature and nonce for its authorization automatically. If set, you must also set `contractAddress` to the Wallet address or the request will error. This will be rarely used except in very advanced use cases. Only available on `execute`. |
+| `gasLimit` | `string` \| `null` | Gas limit for the transaction. The transaction will revert if it uses more gas than this, and you will spend the gas. Ordinarily 1Shot calculates it; for very complicated transactions you may need to set it manually as estimation can underestimate. |
 
 Batch execution accepts these same options at the batch level.
 
-### Optional options for delegated execution
+### Additional options for delegated execution
 
 Delegated execution (`executeAsDelegator`, `executeBatchAsDelegator`) uses a separate options set. It does **not** support `contractAddress` or `authorizationDataAddress`. It supports the shared options above (`walletId`, `memo`, `authorizationList`, `value`) plus the following.
 
@@ -63,12 +60,6 @@ Delegated execution (`executeAsDelegator`, `executeBatchAsDelegator`) uses a sep
 | `delegationId` | `string` (UUID) \| `null` | ID of a specific stored delegation to use. Preferred when you need 1Shot API to use a particular delegation. Not usable with `delegatorAddress` or `delegationData`. |
 | `delegationData` | `string[]` \| `null` | Array of delegation objects, each a JSON string (BigInts as strings). One-time use; not stored. Not usable with `delegatorAddress` or `delegationId`. |
 
-**Other optional (delegated):**
-
-| Option | Type | Description |
-|--------|------|-------------|
-| `gasLimit` | `string` \| `null` | Gas limit for the transaction. The transaction will revert if it uses more gas than this, and you will spend the gas. Ordinarily 1Shot calculates it; for very complicated transactions you may need to set it manually as estimation can underestimate. |
-
 **executeBatchAsDelegator (batch-level):** `walletId` and `contractMethods` are **required**. Optional: `atomic`, `memo`, `authorizationList`, `gasLimit` (no `value` at batch level). Each item in `contractMethods` supplies delegator identity (exactly one of `delegatorAddress`, `delegationId`, or `delegationData`) plus method params.
 
 ## 1) Single Execute
@@ -76,7 +67,7 @@ Delegated execution (`executeAsDelegator`, `executeBatchAsDelegator`) uses a sep
 ```ts
 const transaction = await client.contractMethods.execute(
   "your_contract_method_id",
-  {
+  { // parameter names returned by the list method
     recipient: "0x1234567890123456789012345678901234567890",
     amount: "1000000000000000000",
   },
@@ -120,7 +111,7 @@ Use `atomic: true` when the full batch should revert if any call fails.
 ```ts
 const transaction = await client.contractMethods.executeBatch({
   walletId: "your_wallet_id",
-  contractMethods: [
+  contractMethods: [ // list of executions to perform in a single transaction
     {
       contractMethodId: "method_uuid_1",
       executionIndex: 0,
@@ -141,8 +132,7 @@ const transaction = await client.contractMethods.executeBatch({
 
 **Required:** `walletId` (escrow wallet that runs the batch), `contractMethods` (array of batch items). **Optional at batch level:** `atomic`, `memo`, `authorizationList`, `gasLimit`. Each item in `contractMethods` must include delegator identity (exactly one of `delegatorAddress`, `delegationId`, or `delegationData`) plus `contractMethodId`, `executionIndex`, and `params`.
 
-- `atomic`: if `true`, all transactions must succeed or the entire batch is rolled back; if `false`, successful executions complete but no transactions after the first failure run.
-- `gasLimit`: transaction reverts if it uses more gas than this (and you spend the gas). 1Shot usually calculates it; set manually for very complicated transactions if estimation underestimates.
+- `atomic`: if `true`, all transactions must succeed or the entire batch is rolled back; if `false`, successful executions complete but no transactions after the first failure run. 
 
 ```ts
 const transaction = await client.contractMethods.executeBatchAsDelegator({
@@ -174,5 +164,5 @@ const transaction = await client.contractMethods.executeBatchAsDelegator({
 
 - Validate address formats and numeric string inputs before execute calls.
 - For delegated paths, validate delegation scope and expiration first.
-- Use `atomic: true` only when all calls must succeed together.
+- Use `atomic: true` only when all calls must succeed together, however this requires .
 - Do not log raw secrets, signatures, or full delegation payloads.

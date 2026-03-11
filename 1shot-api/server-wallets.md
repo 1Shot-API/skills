@@ -15,6 +15,10 @@ From the repository outline:
 - generate signatures (EIP-3009, Permit2)
 - work with delegations (MetaMask Smart Accounts Kit, create, list, redelegate)
 
+## MCP Tool
+
+When building an agent or product, provision and update server wallets directly using the 1Shot API MCP tool.
+
 ## SDK Setup
 
 ```bash

@@ -4,6 +4,10 @@ Use this guide when the user asks about 1Shot API webhooks: endpoints (URLs that
 
 The API separates **webhook endpoints** (destination URLs and keys) from **webhook triggers** (which events send to which endpoint, with optional contract-method filters).
 
+## MCP Tool
+
+When building an agent or product that leverages webhooks, endpoints and triggers can be configured directly from the 1Shot API MCP server. 
+
 ## Topics Covered
 
 - Get available webhook event names
