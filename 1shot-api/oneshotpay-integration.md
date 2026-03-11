@@ -130,6 +130,7 @@ const delegation = await wallet
 
 - Requires the application developer to provide **UserId** and **API Token** from their 1ShotPay account (**Advanced Settings** under user profile).
 - Server creates **pay links** with a hosted checkout URL. User opens the URL in a new tab, submits payment, then is redirected back to the original application (or a URL you control).
+- Pay links are both human and agent payable. The human-payable link pattern is `https://1shotpay.com/link/{payLinkId}` while the x402 agent payable link pattern is `https://1shotpay.com/api/link/{payLinkId}`.
 
 ### Install
 
@@ -264,9 +265,9 @@ server.waitForPayLinkPayment(payLinkId).match(
 
 ---
 
-## MCP Capability Guidance
+## 1ShotPay MCP Tools
 
-When using 1ShotPay MCP capabilities:
+Use the 1ShotPay MCP server `https://1shotpay.com/mcp` in agentic settings. It provides two primary tools.
 
-- **Agent wallets** — Provide explicit wallet ownership and scope constraints.
-- **Generate pay links** — Include metadata for traceability (user id, purpose, correlation id).
+- **Agent wallets** — A tool for creating x402-compatible payment headers to spend from the user's 1ShotPay balance.
+- **Generate pay links** — A tool for generating human and agent payable pay links fromthe user's 1ShotPay account.
