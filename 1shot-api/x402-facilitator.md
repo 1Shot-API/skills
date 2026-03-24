@@ -1,6 +1,6 @@
 # x402 Facilitator
 
-Use this guide when integrating x402 payments with 1Shot API: provisioning, token setup, and facilitator configuration in a TypeScript/Node service compatible with the Coinbase x402 npm suite.
+Use this guide when integrating x402 payments with 1Shot API: provisioning, token setup, and facilitator configuration in a TypeScript/Node service compatible with the Coinbase x402 npm suite. Both V1 and V2 x402 payments are supported but V2 is recommended. 
 
 ## Prerequisites
 
