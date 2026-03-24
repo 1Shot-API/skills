@@ -93,3 +93,4 @@ This repository contains the skill at:
 - gasLimit for `execute`
 - re-fork x402 and create new facilitator client
 - update client-sdk patterns in 1shotpay readme
+- block range limit for event reads
