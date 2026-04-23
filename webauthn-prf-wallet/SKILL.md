@@ -38,7 +38,7 @@ A reusable pattern for deriving an Ethereum private key from a user's passkey en
 ## Package Installation
 
 ```bash
-npm install @simplewebauthn/browser @simplewebauthn/server ethers viem postmate bowser
+npm install @simplewebauthn/browser @simplewebauthn/server ethers postmate bowser
 ```
 
 At runtime the pattern uses the platform `crypto.subtle` API (no polyfill needed in modern browsers). Server-side you need a KV store for challenges with a short TTL (Redis is used in the reference, any equivalent works).
