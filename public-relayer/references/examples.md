@@ -15,8 +15,13 @@ type JsonRpc<T> =
   | { jsonrpc: "2.0"; id: number | string; result: T }
   | { jsonrpc: "2.0"; id: number | string; error: { code: number; message: string; data?: unknown } };
 
-export async function rpc<T>(method: string, params: unknown, id: number = 1): Promise<T> {
-  const res = await fetch(RELAYER_URL, {
+export async function rpc<T>(
+  method: string,
+  params: unknown,
+  id: number = 1,
+  relayerUrl: string = RELAYER_URL,
+): Promise<T> {
+  const res = await fetch(relayerUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
@@ -62,6 +67,118 @@ export function computeFeeAmount(
 ```
 
 > For production, replace the float multiplication with a fixed-point conversion to avoid precision loss for large gas amounts.
+
+---
+
+## Example 0 — Browser extension flow (MetaMask + viem + EIP-7715 permissions)
+
+Use this shape for browser apps where the user signs with a wallet extension. Prefer extension permission requests over local `signDelegation` flows in this context.
+
+```ts
+import { decodeDelegations, erc7715ProviderActions } from "@metamask/delegation-toolkit";
+import { createWalletClient, custom, encodeFunctionData, erc20Abi, parseUnits } from "viem";
+
+function relayerUrlForChain(chainId: string): string {
+  return chainId === "11155111" || chainId === "84532"
+    ? "https://relayer.1shotapi.dev/relayers"
+    : "https://relayer.1shotapi.com/relayers";
+}
+
+const chainId = "84532";
+const relayerUrl = relayerUrlForChain(chainId);
+const rpcAt = <T>(method: string, params: unknown, id = 1) => rpc<T>(method, params, id, relayerUrl);
+
+const walletClient = createWalletClient({
+  transport: custom(window.ethereum!),
+});
+const wallet7715 = walletClient.extend(erc7715ProviderActions());
+
+// 1) capabilities
+const caps = await rpcAt<Record<string, {
+  feeCollector: `0x${string}`;
+  targetAddress: `0x${string}`;
+  tokens: { address: `0x${string}`; symbol?: string; decimals: number | string }[];
+}>>("relayer_getCapabilities", [chainId]);
+const chainCaps = caps[chainId]!;
+const token = chainCaps.tokens.find((t) => t.symbol === "USDC")!;
+const tokenDecimals = Number(token.decimals);
+
+// 2) fee quote
+const fee = await rpcAt<{
+  context: string;
+  targetAddress?: `0x${string}`;
+  feeCollector: `0x${string}`;
+}>("relayer_getFeeData", {
+  chainId,
+  token: token.address,
+});
+
+// Decimal-safe amount parsing for UI input:
+const workAmount = parseUnits("0.01", tokenDecimals);
+
+// 3) request permission context from extension
+const granted = await wallet7715.requestExecutionPermissions([
+  {
+    chainId: Number(chainId),
+    to: fee.targetAddress ?? chainCaps.targetAddress,
+    permission: {
+      type: "erc20-token-periodic",
+      data: {
+        tokenAddress: token.address,
+        periodAmount: workAmount,
+        periodDuration: 86400,
+        justification: "Allow fee + work transfer",
+      },
+      isAdjustmentAllowed: true,
+    },
+    expiry: Math.floor(Date.now() / 1000) + 3600,
+  },
+]);
+
+const context = granted[0]?.context;
+if (!context) throw new Error("No permission context returned by wallet");
+const delegations = decodeDelegations(context);
+
+const destinationAddress = "0x3e6a2f0CBA03d293B54c9fCF354948903007a798" as `0x${string}`;
+const feeTransferExecution = {
+  target: token.address,
+  value: "0",
+  data: encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [fee.feeCollector, workAmount],
+  }),
+};
+const workExecution = {
+  target: token.address,
+  value: "0",
+  data: encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [destinationAddress, workAmount],
+  }),
+};
+
+// 4) submit
+const taskId = await rpcAt<string>("relayer_send7710Transaction", {
+  chainId,
+  context: fee.context,
+  transactions: [
+    {
+      permissionContext: delegations,
+      executions: [feeTransferExecution, workExecution],
+    },
+  ],
+});
+
+console.log("submitted", taskId, "via", relayerUrl);
+```
+
+Notes:
+
+- If `wallet_requestExecutionPermissions` is unavailable, the connected wallet likely does not support EIP-7715.
+- Keep local `createDelegation` + `signDelegation` for backend/script signers; do not force that path in browser extension UX.
+- Parse human amounts using `parseUnits` and token decimals; do not call `BigInt("0.01")`.
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: public-relayer
-description: Integrate a client app with the 1Shot public relayer JSON-RPC API to submit gas-abstracted EIP-7710 delegated transactions on EVM chains. Use this skill whenever a developer mentions the 1Shot relayer, gasless or gas-abstracted EVM transactions, ERC-7710 delegations, `relayer_send7710Transaction`, `relayer_send7710TransactionMultichain`, `relayer_getCapabilities`, `relayer_getFeeData`, or `relayer_getStatus`; wants to upgrade an EOA to a `7702StatelessDelegator` smart account; sign delegations with `@metamask/smart-accounts-kit`; pay relayer fees in ERC-20 tokens; lock in a gas-price quote; build a webhook receiver for relayer status events; or verify Ed25519 webhook signatures from `/.well-known/jwks.json`. Trigger this skill even when the user does not name the relayer explicitly but is clearly trying to send a gas-abstracted EVM transaction through a third-party relay using EIP-7710 / EIP-7702.
+description: Integrate a client app with the 1Shot public relayer JSON-RPC API to submit gas-abstracted EIP-7710 delegated transactions on EVM chains. Use this skill whenever a developer mentions the 1Shot relayer, gasless or gas-abstracted EVM transactions, ERC-7710 delegations, `relayer_send7710Transaction`, `relayer_send7710TransactionMultichain`, `relayer_getCapabilities`, `relayer_getFeeData`, or `relayer_getStatus`; wants to upgrade an EOA to a `7702StatelessDelegator` smart account; sign delegations with `@metamask/smart-accounts-kit`; integrate a browser wallet flow with `window.ethereum`, `requestExecutionPermissions`, `decodeDelegations`, or EIP-7715; pay relayer fees in ERC-20 tokens; lock in a gas-price quote; build a webhook receiver for relayer status events; or verify Ed25519 webhook signatures from `/.well-known/jwks.json`. Trigger this skill even when the user does not name the relayer explicitly but is clearly trying to send a gas-abstracted EVM transaction through a third-party relay using EIP-7710 / EIP-7702.
 ---
 
 # 1Shot Public Relayer (EIP-7710) Integration
@@ -19,14 +19,28 @@ The relayer accepts a signed MetaMask delegation from a `7702StatelessDelegator`
 
 ## Endpoints and packages
 
-- **Relayer JSON-RPC URL**: `POST` JSON-RPC 2.0 to one of:
-  - Production: `https://relayer.1shotapi.com/relayers`
-  - Dev: `https://relayer.1shotapi.dev/relayers`
+- **Relayer JSON-RPC URL**: choose endpoint by chain before calling `relayer_getCapabilities`, `relayer_getFeeData`, `relayer_send7710Transaction`, or `relayer_getStatus`:
+  - Mainnets: `https://relayer.1shotapi.com/relayers`
+  - Sepolia (`11155111`) and Base Sepolia (`84532`): `https://relayer.1shotapi.dev/relayers`
 - **JWKS for webhook verification**: `GET https://relayer.1shotapi.com/.well-known/jwks.json` (Ed25519, `kty: "OKP"`, `crv: "Ed25519"`).
 - **Client packages**:
   - `@metamask/smart-accounts-kit` for `toMetaMaskSmartAccount`, `createDelegation`, `ScopeType`, `Implementation.Stateless7702`.
   - `viem` for `createPublicClient`, `encodeFunctionData`, `signAuthorization`, `privateKeyToAccount`.
+  - `@metamask/delegation-toolkit` for `erc7715ProviderActions`, `decodeDelegations` in extension-first browser flows.
   - `@noble/ed25519` (or any Ed25519 verifier) for webhook signature verification.
+
+### Browser extension integration (recommended for UI apps)
+
+When the user is signing in a browser with MetaMask (or another extension wallet), prefer an extension-first flow:
+
+1. Create a wallet client from `window.ethereum` with `createWalletClient({ transport: custom(window.ethereum) })`.
+2. Extend it with `erc7715ProviderActions()`.
+3. Request permissions through the extension via `requestExecutionPermissions(...)`.
+4. Decode `context` with `decodeDelegations(context)` and pass the decoded delegations as `permissionContext` in `relayer_send7710Transaction`.
+
+Why this path matters: extension wallets own the keys and permission UX. Local/internal signing helpers like `signDelegation` are the right fit for backend or script-driven signers, but they can fail or mislead in extension flows.
+
+If `requestExecutionPermissions` is unavailable, surface this clearly: the connected wallet likely does not support EIP-7715 and the app should prompt the user to switch wallets.
 
 ## Order of operations
 
@@ -75,18 +89,26 @@ Call once per `(chainId, paymentToken)` immediately before submitting. The respo
 3. Convert to payment-token atoms using `rate` and the token's `decimals`.
 4. **Floor**: if the converted amount is less than `minFee` (which represents $0.01), use `minFee`. Always `feeAmount = max(converted, minFee)`.
 
+For user-entered token amounts, parse decimal strings with token decimals first (for example, `parseUnits("0.01", 6)` for USDC). Never pass decimal strings directly to `BigInt`, because `"0.01"` is invalid and leads to runtime failures.
+
 The delegation's caveat scope must allow at least `feeAmount` to be transferred to `feeCollector`. Be conservative — under-paying causes `InsufficientPayment` (4200) and the relayer will reject.
 
 ### Step 3 — `relayer_send7710Transaction` (or `_Multichain`): submit the bundle
 
-Build the bundle on the client using `@metamask/smart-accounts-kit`:
+Choose a signing path first:
+
+- **Browser extension path (recommended for UI apps):** request permissions with `requestExecutionPermissions`, decode with `decodeDelegations`, and send decoded delegations in `permissionContext`.
+- **Local signer path (backend/scripts):** build and sign delegations with `createDelegation` + `smartAccount.signDelegation`.
+
+Then build and submit the bundle:
 
 1. **Initialize the smart account** with `toMetaMaskSmartAccount({ implementation: Implementation.Stateless7702, address: <delegator EOA address>, signer })`.
 2. **(If first use)** sign an EIP-7702 `authorizationList` entry with `account.signAuthorization({ chainId, contractAddress: <statelessDelegatorImplementation>, nonce })` and include it in the request — the relayer will upgrade the EOA in-flight before redeeming.
-3. **Create the delegation** with `createDelegation({ to: targetAddress (from Step 1), from: smartAccount.address, environment: smartAccount.environment, salt, scope: { type: ScopeType.Erc20TransferAmount | ScopeType.FunctionCall, ... maxAmount: feeAmount + workAmount } })`.
-4. **Sign the delegation** with `smartAccount.signDelegation({ delegation })` and inline the signature.
-5. **Encode each execution's calldata** (`encodeFunctionData` for the fee `transfer` to `feeCollector` and for the user's primary work).
-6. **POST** the JSON-RPC body. The `params.context` field must be the **price-lock `context` string** returned from `relayer_getFeeData`, not a free-form string.
+3. **Generate permission context**:
+   - Browser extension path: call `requestExecutionPermissions` and decode `granted[0].context` with `decodeDelegations`.
+   - Local signer path: create a delegation with `createDelegation({ to: targetAddress (from Step 1), from: smartAccount.address, environment: smartAccount.environment, salt, scope: { type: ScopeType.Erc20TransferAmount | ScopeType.FunctionCall, ... maxAmount: feeAmount + workAmount } })` and sign with `smartAccount.signDelegation({ delegation })`.
+4. **Encode each execution's calldata** (`encodeFunctionData` for the fee `transfer` to `feeCollector` and for the user's primary work).
+5. **POST** the JSON-RPC body. The `params.context` field must be the **price-lock `context` string** returned from `relayer_getFeeData`, not a free-form string.
 
 Choose the right method:
 
@@ -164,6 +186,13 @@ const taskId = await rpc("relayer_send7710Transaction", {
 | 4212 | Multichain Not Supported      | Fall back to `relayer_send7710Transaction` per chain.                       |
 | 4214 | Duplicate Task ID             | Omit `taskId` and let the relayer assign one, or send a fresh random hex.   |
 
+## Browser-flow pitfalls and fixes
+
+- `"wallet_requestExecutionPermissions does not exist"`: wallet does not support EIP-7715. Prompt the user to switch to a compatible wallet.
+- `"External signature requests cannot sign delegations for internal accounts"`: wrong signing path. Use extension permission requests, not internal-account delegation signing.
+- `"Account does not support signMessage"`: signer/account mismatch. In extension mode, avoid local-account assumptions.
+- `"Cannot convert 0.01 to a BigInt"`: parse decimal inputs with token decimals first, then convert.
+
 See [references/schemas.md](references/schemas.md) for the complete error catalog and full request/response schemas.
 
 ## Composing with `webauthn-prf-wallet` for a fully non-custodial app
@@ -179,6 +208,6 @@ End-to-end, the user owns their key (passkey), pays only the per-tx fee (ERC-20)
 ## Additional resources
 
 - [references/schemas.md](references/schemas.md) — full JSON-RPC method signatures, schemas, status/error codes, JWKS body shape. Read this when you need exact parameter shapes, the complete error catalog, or the on-the-wire webhook payload format.
-- [references/examples.md](references/examples.md) — runnable TypeScript patterns: single-chain self-sponsored, sponsored, multichain, webhook receiver with Ed25519 verification. Read this when you're about to write client code or want to copy a known-good integration shape.
+- [references/examples.md](references/examples.md) — runnable TypeScript patterns: browser extension (MetaMask + viem + EIP-7715 permissions), single-chain self-sponsored, sponsored, multichain, webhook receiver with Ed25519 verification. Read this when you're about to write client code or want to copy a known-good integration shape.
 - `webauthn-prf-wallet` skill — companion skill for client-side passkey-derived EVM keys held in an isolated iframe. Use together with this skill for a fully non-custodial setup.
 - MetaMask Smart Accounts Kit guide: <https://docs.metamask.io/smart-accounts-kit/guides/delegation/execute-on-smart-accounts-behalf/>.
