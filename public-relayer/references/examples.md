@@ -2,7 +2,7 @@
 
 Copy-paste-ready TypeScript patterns for integrating with the 1Shot relayer using `@metamask/smart-accounts-kit` and `viem`. All snippets use `bun` runtime conventions and assume modern ESM.
 
-> Pair these with `SKILL.md` (workflow + decisions) and `reference.md` (schemas + error catalog).
+> Pair these with `SKILL.md` (workflow + decisions) and `schemas.md` (schemas + error catalog).
 
 ## Shared utilities
 
@@ -47,9 +47,33 @@ export function toRelayerJson(value: unknown): unknown {
   }
   return value;
 }
+
+/** POST fee estimate (same `params` shape as the matching send7710 method). */
+export async function post7710FeeEstimate(
+  method:
+    | "relayer_estimate7710Transaction"
+    | "relayer_estimate7710TransactionMultichain",
+  params: unknown,
+  relayerUrl: string = RELAYER_URL,
+): Promise<unknown> {
+  return rpc(method, params, 0, relayerUrl);
+}
+
+export type Estimate7710Result = {
+  success: boolean;
+  paymentTokenAddress?: `0x${string}`;
+  paymentChain?: number;
+  gasUsed: Record<string, string>;
+  requiredPaymentAmount?: string;
+  context?: string;
+  contextByChainId?: Record<string, string>;
+  error?: string;
+};
 ```
 
-## Fee math (always floor at `minFee`)
+## Fee math (fallback via `relayer_getFeeData`)
+
+Prefer **`relayer_estimate7710Transaction`** when the signed bundle exists — the relayer simulates gas and returns `requiredPaymentAmount` plus signed `context`. Use the helper below only for rough quotes before the bundle is built.
 
 ```ts
 export function computeFeeAmount(
@@ -75,7 +99,8 @@ export function computeFeeAmount(
 Use this shape for browser apps where the user signs with a wallet extension. Prefer extension permission requests over local `signDelegation` flows in this context.
 
 ```ts
-import { decodeDelegations, erc7715ProviderActions } from "@metamask/delegation-toolkit";
+import { erc7715ProviderActions } from "@metamask/smart-accounts-kit/actions";
+import { decodeDelegations } from "@metamask/smart-accounts-kit/utils";
 import { createWalletClient, custom, encodeFunctionData, erc20Abi, parseUnits } from "viem";
 
 function relayerUrlForChain(chainId: string): string {
@@ -102,30 +127,38 @@ const caps = await rpcAt<Record<string, {
 const chainCaps = caps[chainId]!;
 const token = chainCaps.tokens.find((t) => t.symbol === "USDC")!;
 const tokenDecimals = Number(token.decimals);
+const targetAddress = chainCaps.targetAddress;
 
 // 2) fee quote
 const fee = await rpcAt<{
+  gasPrice: `0x${string}`;
+  rate: number;
+  minFee: string;
   context: string;
   targetAddress?: `0x${string}`;
   feeCollector: `0x${string}`;
+  token: { address: `0x${string}`; decimals: number };
 }>("relayer_getFeeData", {
   chainId,
   token: token.address,
 });
 
-// Decimal-safe amount parsing for UI input:
+const estimatedGasUsed = 200_000n; // upper bound for fee transfer + work transfer
+const feeAmount = computeFeeAmount(fee, estimatedGasUsed);
 const workAmount = parseUnits("0.01", tokenDecimals);
+const totalAmount = feeAmount + workAmount;
 
 // 3) request permission context from extension
+// `to` must be the relayer targetAddress — not a dapp session account.
 const granted = await wallet7715.requestExecutionPermissions([
   {
     chainId: Number(chainId),
-    to: fee.targetAddress ?? chainCaps.targetAddress,
+    to: fee.targetAddress ?? targetAddress,
     permission: {
       type: "erc20-token-periodic",
       data: {
         tokenAddress: token.address,
-        periodAmount: workAmount,
+        periodAmount: totalAmount,
         periodDuration: 86400,
         justification: "Allow fee + work transfer",
       },
@@ -137,7 +170,7 @@ const granted = await wallet7715.requestExecutionPermissions([
 
 const context = granted[0]?.context;
 if (!context) throw new Error("No permission context returned by wallet");
-const delegations = decodeDelegations(context);
+const delegations = decodeDelegations(context).map((d) => toRelayerJson(d));
 
 const destinationAddress = "0x3e6a2f0CBA03d293B54c9fCF354948903007a798" as `0x${string}`;
 const feeTransferExecution = {
@@ -146,7 +179,7 @@ const feeTransferExecution = {
   data: encodeFunctionData({
     abi: erc20Abi,
     functionName: "transfer",
-    args: [fee.feeCollector, workAmount],
+    args: [fee.feeCollector, feeAmount],
   }),
 };
 const workExecution = {
@@ -182,9 +215,9 @@ Notes:
 
 ---
 
-## Example 1 — Self-sponsored, single chain (fee + work in one delegation)
+## Example 1 — Self-sponsored, single chain (getFeeData fallback)
 
-The same delegator pays the fee and executes the work. One delegation scoped to `feeAmount + workAmount`, one bundle with two `executions[]`.
+The same delegator pays the fee and executes the work. One delegation scoped to `feeAmount + workAmount`, one bundle with two `executions[]`. For the preferred estimate-first flow, see **Example 1b**.
 
 ```ts
 import { randomBytes } from "node:crypto";
@@ -192,6 +225,7 @@ import {
   Implementation,
   ScopeType,
   createDelegation,
+  getSmartAccountsEnvironment,
   toMetaMaskSmartAccount,
 } from "@metamask/smart-accounts-kit";
 import { createPublicClient, encodeFunctionData, erc20Abi, getAddress, http } from "viem";
@@ -199,7 +233,8 @@ import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia as chain } from "viem/chains";
 import { bytesToHex } from "viem/utils";
 
-const STATELESS_DELEGATOR_IMPL = "0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B" as `0x${string}`;
+const environment = getSmartAccountsEnvironment(chain.id);
+const statelessDelegatorImpl = environment.implementations.EIP7702StatelessDeleGatorImpl;
 
 const delegatorAccount = privateKeyToAccount(process.env.DELEGATOR_PRIVATE_KEY as `0x${string}`);
 const publicClient = createPublicClient({ chain, transport: http() });
@@ -241,7 +276,7 @@ if (process.env.RELAYER_7710_AUTHORIZE === "true") {
   });
   const auth = await delegatorAccount.signAuthorization({
     chainId: chain.id,
-    contractAddress: getAddress(STATELESS_DELEGATOR_IMPL),
+    contractAddress: getAddress(statelessDelegatorImpl),
     nonce,
   });
   authorizationList = [{
@@ -293,7 +328,115 @@ const taskId = await rpc<string>("relayer_send7710Transaction", {
 console.log("submitted", taskId);
 ```
 
-If `destinationUrl` is not set, fall back to polling — see `relayer_getStatus` polling pattern in Example 4.
+If `destinationUrl` is not set, fall back to polling — see Example 4.
+
+---
+
+## Example 1b — Estimate-first, single chain (preferred)
+
+Build the bundle with a mock fee ≥ `minFee`, estimate with the **same params** as send (no `context`), adjust fee amount from `requiredPaymentAmount` if needed, then submit with `estimate.context`.
+
+```ts
+import { randomBytes } from "node:crypto";
+import {
+  Implementation,
+  ScopeType,
+  createDelegation,
+  toMetaMaskSmartAccount,
+} from "@metamask/smart-accounts-kit";
+import { createPublicClient, encodeFunctionData, erc20Abi, http, parseUnits } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { baseSepolia as chain } from "viem/chains";
+import { bytesToHex } from "viem/utils";
+
+const delegatorAccount = privateKeyToAccount(process.env.DELEGATOR_PRIVATE_KEY as `0x${string}`);
+const publicClient = createPublicClient({ chain, transport: http() });
+
+const caps = await rpc<Record<string, {
+  feeCollector: `0x${string}`;
+  targetAddress: `0x${string}`;
+  tokens: { address: `0x${string}`; symbol?: string; decimals: number | string }[];
+}>>("relayer_getCapabilities", [String(chain.id)]);
+const chainCaps = caps[String(chain.id)]!;
+const usdc = chainCaps.tokens.find((t) => t.symbol === "USDC")!;
+
+// Mock fee ≥ minFee (0.01 USDC is a safe placeholder for USDC on most chains)
+const mockFeeAmount = parseUnits("0.01", Number(usdc.decimals));
+const workAmount = 20_000n;
+const destinationAddress = "0x3e6a2f0CBA03d293B54c9fCF354948903007a798" as `0x${string}`;
+
+const smartAccount = await toMetaMaskSmartAccount({
+  client: publicClient,
+  implementation: Implementation.Stateless7702,
+  address: delegatorAccount.address,
+  signer: { account: delegatorAccount },
+});
+
+async function buildSignedBundle(feeAmount: bigint) {
+  const delegation = createDelegation({
+    to: chainCaps.targetAddress,
+    from: smartAccount.address,
+    environment: smartAccount.environment,
+    salt: bytesToHex(Uint8Array.from(randomBytes(32))) as `0x${string}`,
+    scope: {
+      type: ScopeType.Erc20TransferAmount,
+      tokenAddress: usdc.address,
+      maxAmount: feeAmount + workAmount,
+    },
+  });
+  const signature = await smartAccount.signDelegation({ delegation });
+  const feeCalldata = encodeFunctionData({
+    abi: erc20Abi, functionName: "transfer",
+    args: [chainCaps.feeCollector, feeAmount],
+  });
+  const workCalldata = encodeFunctionData({
+    abi: erc20Abi, functionName: "transfer",
+    args: [destinationAddress, workAmount],
+  });
+  return {
+    chainId: String(chain.id),
+    transactions: [{
+      permissionContext: [toRelayerJson({ ...delegation, signature })],
+      executions: [
+        { target: usdc.address, value: "0", data: feeCalldata },
+        { target: usdc.address, value: "0", data: workCalldata },
+      ],
+    }],
+  };
+}
+
+// 1) estimate with mock fee
+let sendParams = await buildSignedBundle(mockFeeAmount);
+let estimate = await rpc<Estimate7710Result>(
+  "relayer_estimate7710Transaction",
+  sendParams,
+);
+if (!estimate.success) throw new Error(estimate.error ?? "estimate failed");
+
+// 2) if required fee differs from mock, rebuild + re-estimate
+const requiredFee = BigInt(estimate.requiredPaymentAmount!);
+if (requiredFee !== mockFeeAmount) {
+  sendParams = await buildSignedBundle(requiredFee);
+  estimate = await rpc<Estimate7710Result>(
+    "relayer_estimate7710Transaction",
+    sendParams,
+  );
+  if (!estimate.success) throw new Error(estimate.error ?? "re-estimate failed");
+}
+
+// 3) send with price lock from estimate
+const orderRef = "order-abc123";
+const taskId = await rpc<string>("relayer_send7710Transaction", {
+  ...sendParams,
+  context: estimate.context,
+  destinationUrl: process.env.WEBHOOK_URL,
+  memo: orderRef, // echoed in relayer_getStatus and webhook data.memo
+});
+
+console.log("submitted", taskId, "fee", estimate.requiredPaymentAmount);
+```
+
+If `destinationUrl` is not set, fall back to polling — see Example 4.
 
 ---
 
@@ -350,24 +493,16 @@ const taskId = await rpc<string>("relayer_send7710Transaction", {
 
 ## Example 3 — Multichain (fee on chain A, work on chain B)
 
-Use `relayer_send7710TransactionMultichain` when the fee and the work happen on different chains. Each chain gets its own params object (own `context` from `relayer_getFeeData` for that chain, own `authorizationList`, own `transactions[]`). Returns one `TaskId` per chain entry, in order.
+Use `relayer_send7710TransactionMultichain` when the fee and the work happen on different chains. Estimate first with the same params array, then send with per-chain `context` from `contextByChainId`.
 
 ```ts
 import { baseSepolia, sepolia } from "viem/chains";
 
-// Quote each chain independently:
-const feeBaseCaps = (await rpc<...>("relayer_getCapabilities", [String(baseSepolia.id), String(sepolia.id)]))[String(baseSepolia.id)]!;
-const feeBaseQuote = await rpc<...>("relayer_getFeeData", { chainId: String(baseSepolia.id), token: usdcBase });
-const sepoliaQuote = await rpc<...>("relayer_getFeeData", { chainId: String(sepolia.id), token: usdcSepolia });
+// ... build signed delegations + executions per chain (fee leg on Base Sepolia only) ...
 
-// Build a delegation per chain (each scoped to its own amount).
-// Sign separately under public clients for each chain.
-
-const taskIds = await rpc<string[]>("relayer_send7710TransactionMultichain", [
+const multichainParams = [
   {
     chainId: String(baseSepolia.id),
-    context: feeBaseQuote.context,
-    destinationUrl: process.env.WEBHOOK_URL,
     ...(authBase ? { authorizationList: authBase } : {}),
     transactions: [{
       permissionContext: [toRelayerJson(signedFeeDelegation)],
@@ -376,17 +511,32 @@ const taskIds = await rpc<string[]>("relayer_send7710TransactionMultichain", [
   },
   {
     chainId: String(sepolia.id),
-    context: sepoliaQuote.context,
-    destinationUrl: process.env.WEBHOOK_URL,
     ...(authSep ? { authorizationList: authSep } : {}),
     transactions: [{
       permissionContext: [toRelayerJson(signedWorkDelegation)],
       executions: [{ target: usdcSepolia, value: "0", data: workCalldataSepolia }],
     }],
   },
-]);
+];
+
+// 1) estimate (same params as send, no context)
+const estimate = await rpc<Estimate7710Result>(
+  "relayer_estimate7710TransactionMultichain",
+  multichainParams,
+);
+if (!estimate.success) throw new Error(estimate.error ?? "multichain estimate failed");
+
+// 2) send with per-chain price lock
+const taskIds = await rpc<string[]>("relayer_send7710TransactionMultichain",
+  multichainParams.map((param) => ({
+    ...param,
+    context: estimate.contextByChainId![param.chainId],
+    destinationUrl: process.env.WEBHOOK_URL,
+  })),
+);
 
 const [feeTaskId, workTaskId] = taskIds;
+console.log("submitted", feeTaskId, workTaskId, "fee", estimate.requiredPaymentAmount);
 ```
 
 ---
@@ -401,6 +551,7 @@ async function pollUntilTerminal(taskId: string, intervalMs = 3000, timeoutMs = 
   while (Date.now() < deadline) {
     const result = await rpc<{
       status: 100 | 110 | 200 | 400 | 500;
+      memo?: string; // present when send included params.memo; omitted otherwise
       hash?: string; receipt?: object; message?: string; data?: unknown;
     }>("relayer_getStatus", { id: taskId, logs: true });
 
@@ -487,9 +638,10 @@ Bun.serve({
         const ok = await verifyRelayerWebhook(body);
         if (!ok) return new Response("invalid signature", { status: 401 });
 
-        // Idempotency: dedupe on (transactionId, eventName)
-        // Persist quickly, do heavy work async.
-        console.log(body.eventName, (body.data as { transactionId: string }).transactionId);
+        // Idempotency: dedupe on (data.id, type)
+        // Pass the same memo on send to correlate webhook events with app state via data.memo.
+        const data = body.data as { id: string; status: number; memo?: string };
+        console.log("webhook type", body.type, "taskId", data.id, "memo", data.memo);
         return new Response("ok", { status: 200 });
       },
     },
@@ -502,7 +654,8 @@ Key points:
 - The relayer signs over the **canonical JSON** of the body **without `signature`**. Reorder or whitespace differences will fail verification — always use `safe-stable-stringify` (or an equivalent stable serializer).
 - Cache the JWKS; refetch on a `kid` miss to handle rotation.
 - Respond `2xx` within the timeout (typically <30s) so the relayer marks the delivery as `Success` instead of retrying.
-- De-duplicate at the application level: webhook delivery is at-least-once.
+- De-duplicate at the application level on `(data.id, type)`: webhook delivery is at-least-once.
+- When you send `params.memo`, read it back from `data.memo` on each webhook for correlation.
 
 ---
 
@@ -510,8 +663,12 @@ Key points:
 
 | Symptom                                            | Likely cause                                                                 |
 | -------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `4204 Quote Expired`                               | Submitted >45s after `relayer_getFeeData`. Refetch and resubmit immediately. |
-| `4200 Insufficient Payment`                        | Forgot to floor at `minFee` or under-estimated `gasUsed`.                    |
+| `@metamask/delegation-toolkit` not found / deprecated | Migrate to `@metamask/smart-accounts-kit`: main export for delegations, `/actions` for `erc7715ProviderActions`, `/utils` for `decodeDelegations`. |
+| `4204 Quote Expired`                               | Submitted >45s after estimate or `relayer_getFeeData`. Re-estimate and resubmit immediately. |
+| `4200 Insufficient Payment`                        | Forgot to floor at `minFee` or under-estimated `gasUsed`; use `requiredPaymentAmount` from estimate. |
+| `estimate success: false` + mock payment message   | Include an ERC-20 `transfer` to `feeCollector` in executions (mock fee ≥ `minFee`). |
+| `estimate success: false` + minimum fee          | Increase mock fee amount to at least chain/token `minFee`. |
+| `estimate success: false` + Gas estimation failed | Fix delegation scope, calldata, or authorization; bundle would revert on-chain. |
 | `4210 Invalid Authorization List`                  | Two entries supplied; relayer accepts at most one per request.               |
 | Webhook returns `signature mismatch`               | Canonicalization mismatch — always use stable-key stringify, omit `signature`. |
 | `CaveatEnforcer:invalid-call-type` revert on chain | `ScopeType.Erc20TransferAmount` doesn't match a batched call. Switch to `ScopeType.FunctionCall` (token + selector). |

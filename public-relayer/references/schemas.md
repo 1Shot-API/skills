@@ -14,12 +14,15 @@ The full machine-readable spec is in `openrpc.json` at the root of the relayer r
 - [Methods covered](#methods-covered)
 - [`relayer_getCapabilities`](#relayer_getcapabilities)
 - [`relayer_getFeeData`](#relayer_getfeedata)
+- [`relayer_estimate7710Transaction`](#relayer_estimate7710transaction)
+- [`relayer_estimate7710TransactionMultichain`](#relayer_estimate7710transactionmultichain)
 - [`relayer_send7710Transaction`](#relayer_send7710transaction)
 - [`relayer_send7710TransactionMultichain`](#relayer_send7710transactionmultichain)
 - [`relayer_getStatus`](#relayer_getstatus)
 - [Error catalog](#error-catalog)
 - [Webhook payload (when `destinationUrl` is set)](#webhook-payload-when-destinationurl-is-set)
-  - [`data` per event](#data-per-event)
+  - [`type` values](#type-values)
+  - [`data` shape](#data-shape)
   - [Verification protocol](#verification-protocol)
   - [Idempotency](#idempotency)
 - [Production tips](#production-tips)
@@ -31,7 +34,9 @@ The full machine-readable spec is in `openrpc.json` at the root of the relayer r
 | Method                                   | Purpose                                                                  |
 | ---------------------------------------- | ------------------------------------------------------------------------ |
 | `relayer_getCapabilities`                | Discover supported chains, payment tokens, `feeCollector`, `targetAddress`. |
-| `relayer_getFeeData`                     | Fetch a signed price-lock context, `gasPrice`, `rate`, `minFee`, `expiry`. |
+| `relayer_getFeeData`                     | Fetch a signed price-lock context, `gasPrice`, `rate`, `minFee`, `expiry` (rough quote before bundle exists). |
+| `relayer_estimate7710Transaction`        | Synchronous fee quote for a single-chain 7710 bundle; validates + simulates without creating a task. |
+| `relayer_estimate7710TransactionMultichain` | Same for multichain bundles; returns combined fee + per-chain `contextByChainId`. |
 | `relayer_send7710Transaction`            | Submit one ERC-7710 delegated bundle on a single chain.                  |
 | `relayer_send7710TransactionMultichain`  | Submit per-chain ERC-7710 bundles atomically (fee on chain A, work on chain B). |
 | `relayer_getStatus`                      | Poll the status of a submitted task by `TaskId`.                         |
@@ -110,6 +115,68 @@ const feeAmount = tokenAtoms < BigInt(feeData.minFee) ? BigInt(feeData.minFee) :
 
 Treat the quote as valid for the smaller of `(expiry - now)` and **45 seconds**. Fetch fresh quotes between retries.
 
+**Prefer `relayer_estimate7710Transaction`** when the signed bundle exists — estimate returns `requiredPaymentAmount` and signed `context` from a server-side 1Shot gas simulation.
+
+---
+
+## `relayer_estimate7710Transaction`
+
+### Params
+
+Same object as [`relayer_send7710Transaction`](#relayer_send7710transaction) (`Send7710TransactionParams`). Do **not** pass `context` on input. `taskId`, `destinationUrl`, and `memo` are optional and ignored for pricing.
+
+### Result
+
+```ts
+type Estimate7710TransactionResult = {
+  success: boolean;
+  /** First parsed relayer payment token (when success). */
+  paymentTokenAddress?: `0x${string}`;
+  /** Chain id of paymentTokenAddress (when success). */
+  paymentChain?: number;
+  /** Per-chain sum of 1Shot gas units (decimal strings), keyed by chain id string. */
+  gasUsed: Record<string, string>;
+  /** Required fee in paymentTokenAddress smallest units (when success); floored to chain/token minFee. */
+  requiredPaymentAmount?: string;
+  /** Signed price quote for the first payment chain; pass as params.context on send7710. */
+  context?: string;
+  /** Per-chain signed quotes; for multichain send, set each params[i].context from this map. */
+  contextByChainId?: Record<string, string>;
+  /** Present when success is false. */
+  error?: string;
+};
+```
+
+### Behavior
+
+- Validates delegations, executions, and optional `authorizationList` without persisting a task or DB row.
+- Parses the **first mock payment** from executions: an ERC-20 `transfer` to `feeCollector` (from `getCapabilities`).
+- Mock fee amount must be **≥ chain/token `minFee`** (from `getFeeData` or capabilities).
+- Runs 1Shot gas simulation on the encoded `redeemDelegations` calldata.
+- Returns `success: false` with `error` for validation/simulation failures — these are returned in `result`, not always as JSON-RPC errors.
+
+### Wiring to send
+
+Pass `result.context` as `params.context` on `relayer_send7710Transaction` to lock gas price / TWAP to this estimate (~45 seconds).
+
+---
+
+## `relayer_estimate7710TransactionMultichain`
+
+### Params
+
+Same array as [`relayer_send7710TransactionMultichain`](#relayer_send7710transactionmultichain): `Send7710TransactionParams[]` (one entry per chain). Omit `context` on each entry.
+
+### Result
+
+Same `Estimate7710TransactionResult` as single-chain estimate. `requiredPaymentAmount` is the combined fee in the **first mock payment token**. `gasUsed` and `contextByChainId` cover all chains in the request.
+
+### Notes
+
+- Only the **fee-chain** param needs a fee payment execution to `feeCollector`; work-chain params may omit the fee leg.
+- On send, set each `params[i].context = result.contextByChainId![params[i].chainId]`.
+- Typical order: fee chain first, work chain second (application-defined; task IDs match submit order).
+
 ---
 
 ## `relayer_send7710Transaction`
@@ -121,9 +188,10 @@ type Send7710TransactionParams = {
   chainId: string;
   transactions: DelegatedTransaction7710[]; // see below; merged into one redeemDelegations batch
   authorizationList?: AuthorizationListEntry[]; // ≤1 entry; for in-flight EIP-7702 upgrade
-  context?: string;            // signed price-lock context from getFeeData
+  context?: string;            // signed price-lock from estimate or getFeeData
   taskId?: `0x${string}`;      // optional client-provided id; 32-byte hex; must be unique
   destinationUrl?: string;     // ≤256 chars; webhook URL for status events
+  memo?: string;               // ≤256 chars; optional opaque label; echoed in status/webhooks when set
 };
 
 type DelegatedTransaction7710 = {
@@ -164,7 +232,9 @@ type AuthorizationListEntry = {
 
 - All entries in `transactions[]` are merged server-side into a **single** `redeemDelegations` batch on-chain. Each entry carries its own `permissionContext`, so you can mix sponsor and delegator delegations in one call.
 - `authorizationList` may contain at most **one** entry. Sending more returns `4210 Invalid Authorization List`.
+- Pass `context` from the matching [`relayer_estimate7710Transaction`](#relayer_estimate7710transaction) response (`result.context`) to honor the estimate.
 - If `destinationUrl` is set, the relayer POSTs Ed25519-signed JSON to it on each status change.
+- Optional `memo` is stored server-side and returned on `relayer_getStatus` and in webhook `data`; it does not affect relay logic or on-chain execution.
 
 ---
 
@@ -184,7 +254,8 @@ The first entry is typically the **fee** chain and the second is the **work** ch
 
 ### Notes
 
-- Each chain entry has its own `authorizationList`, `context`, `transactions`, `taskId`, and `destinationUrl`.
+- Each chain entry has its own `authorizationList`, `context`, `transactions`, `taskId`, `destinationUrl`, and `memo`.
+- Pass per-chain `context` from [`relayer_estimate7710TransactionMultichain`](#relayer_estimate7710transactionmultichain) (`result.contextByChainId[chainId]`).
 - Returns `4212 MultichainNotSupported` if the relayer instance does not enable multichain.
 
 ---
@@ -210,7 +281,13 @@ type GetStatusParams = { id: `0x${string}`; logs: boolean };
 | 500      | Reverted  | `data` (revert data); optional `message` |
 
 ```ts
-type BaseStatus = { id: `0x${string}`; chainId: string; createdAt: number; status: 100|110|200|400|500 };
+type BaseStatus = {
+  id: `0x${string}`;
+  chainId: string;
+  createdAt: number;
+  status: 100|110|200|400|500;
+  memo?: string;  // present only when send included memo; never null
+};
 ```
 
 Always handle `100`, `110`, `200`, `400`, `500` explicitly. Stop polling on any of `200/400/500`.
@@ -232,7 +309,7 @@ Always handle `100`, `110`, `200`, `400`, `500` explicitly. Stop polling on any 
 | 4201   | Invalid Signature             | Re-sign delegation with fresh `salt`; verify signer matches `delegator`.     |
 | 4202   | Unsupported Payment Token     | Token not in `relayer_getCapabilities.tokens` for this chain.                |
 | 4203   | Rate Limit Exceeded           | Backoff and retry; consider batching.                                        |
-| 4204   | Quote Expired                 | Refetch `relayer_getFeeData` within ≤45 seconds of submit.                   |
+| 4204   | Quote Expired                 | Re-run estimate or refetch `relayer_getFeeData`; resubmit within ≤45 seconds. |
 | 4205   | Insufficient Balance          | Delegator/sponsor lacks token balance for the planned transfers.             |
 | 4206   | Unsupported Chain             | `chainId` not in capabilities.                                               |
 | 4207   | Transaction Too Large         | Reduce `executions[]` count or split into multiple bundles.                  |
@@ -248,59 +325,32 @@ Always handle `100`, `110`, `200`, `400`, `500` explicitly. Stop polling on any 
 
 ## Webhook payload (when `destinationUrl` is set)
 
-The relayer POSTs `application/json` bodies to your URL. The body is a **discriminated union** by `eventName`:
+The relayer POSTs `application/json` bodies to your URL on status changes (Submitted, Confirmed, Reverted). Each body is an Ed25519-signed envelope:
 
 ```ts
-type WebhookEvent = {
-  apiVersion: 0;            // current
-  eventName:
-    | "TransactionExecutionSubmitted"
-    | "TransactionExecutionSuccess"
-    | "TransactionExecutionFailure"
-    | "WalletLowBalanceDetected";
-  type?: string;            // mirrors eventName for v0
-  data: SubmittedData | SuccessData | FailureData | WalletLowBalanceData;
-  timestamp: number;        // unix seconds
-  keyId: string;            // matches a `kid` in /.well-known/jwks.json
-  signature: string;        // base64 Ed25519 signature over the canonical body without `signature`
+type OutboundWebhook = {
+  apiVersion: 0;
+  type: 0 | 1 | 4;           // 4=Submitted, 0=Success, 1=Failure
+  data: GetStatusResponse;   // same discriminated union as relayer_getStatus
+  timestamp: number;         // unix seconds
+  keyId: string;             // matches a `kid` in /.well-known/jwks.json
+  signature: string;         // base64 Ed25519; verify over body without signature
 };
 ```
 
-### `data` per event
+### `type` values
 
-```ts
-type SubmittedData = {
-  transactionId: string;          // = TaskId
-  contractMethodIds: string[];
-  businessId: string;
-  chainId: number | string;
-  transactionHash: `0x${string}`;
-  transactionMemo: string | null;
-};
+| `type` | Meaning |
+| ------ | ------- |
+| `4` | Submitted — `data.status` is `110`; `data.hash` is the on-chain tx hash |
+| `0` | Confirmed — `data.status` is `200`; `data.receipt` is populated |
+| `1` | Failure — `data.status` is `500`; `data.data` holds revert data |
 
-type SuccessData = {
-  transactionId: string;
-  contractMethodId: string | null;
-  businessId: string;
-  chainId: number | string;
-  transactionReceipt: object;     // ethers TransactionReceipt
-  logs: object[];                 // ethers LogDescription[]
-  transactionMemo: string | null;
-};
+### `data` shape
 
-type FailureData = {
-  transactionId: string;
-  contractMethodId: string | null;
-  businessId: string;
-  chainId: number | string;
-  error: string | null;
-  errorCode?: string;
-  transactionMemo: string | null;
-  revertData: string | null;
-  decodedData: [string, string, string] | null;
-  userId: string | null;
-};
-```
+`data` is identical to the [`relayer_getStatus`](#relayer_getstatus) response for that task at the time of the event. When the client sent `params.memo` on submit, **`data.memo`** is present on every webhook for that task; when omitted at send, the field is absent (never `null`).
+
+Use `data.memo` to correlate webhook events with your application state without maintaining a separate taskId→orderId map.
 
 ### Verification protocol
 
@@ -324,14 +374,16 @@ type FailureData = {
 
 ### Idempotency
 
-Webhook deliveries can repeat (network failures, retries). De-duplicate on `(transactionId, eventName)` and treat handlers as idempotent.
+Webhook deliveries can repeat (network failures, retries). De-duplicate on `(data.id, type)` and treat handlers as idempotent.
 
 ---
 
 ## Production tips
 
+- **Client delegations**: use `@metamask/smart-accounts-kit` (not the deprecated `@metamask/delegation-toolkit`) for delegation construction and browser EIP-7715 flows.
 - **Cache JWKS** with a short TTL (e.g. 10 minutes); rotate on signature-verification failure.
 - **Cache capabilities** per session; refetch on `4202`/`4206`.
-- **Refresh quotes** on every submit; never reuse a `context` across submits.
+- **Prefer estimate for fee quotes** when the signed bundle exists; use `getFeeData` only for rough pre-bundle quotes.
+- **Refresh quotes** on every submit; never reuse a `context` across submits. Re-estimate if the bundle changes.
 - **Random `salt`**: 32 bytes from a CSPRNG per delegation.
 - **Convert bigints**: serialize delegation `bigint` fields to `0x`-prefixed hex before JSON-RPC; the kit produces native `bigint` values that JSON cannot encode.
