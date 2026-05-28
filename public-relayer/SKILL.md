@@ -32,6 +32,8 @@ The relayer accepts a signed MetaMask delegation from a `7702StatelessDelegator`
   - `viem` for `createPublicClient`, `encodeFunctionData`, `signAuthorization`, `privateKeyToAccount`.
   - `@noble/ed25519` (or any Ed25519 verifier) for webhook signature verification.
 
+**Method naming:** multichain variants append `Multichain` directly to the base method name (no underscore), e.g. `relayer_send7710Transaction` → `relayer_send7710TransactionMultichain`.
+
 **Migration note:** `@metamask/delegation-toolkit` is deprecated. Remove it from client `package.json` and use `@metamask/smart-accounts-kit` with the subpath imports above.
 
 ### Browser extension integration (recommended for UI apps)
@@ -97,7 +99,7 @@ Include a **mock fee payment** execution: an ERC-20 `transfer` to `feeCollector`
 
 For user-entered token amounts, parse decimal strings with token decimals first (for example, `parseUnits("0.01", 6)` for USDC). Never pass decimal strings directly to `BigInt`, because `"0.01"` is invalid and leads to runtime failures.
 
-### Step 3 — `relayer_estimate7710Transaction` (or `_Multichain`): quote the fee (preferred)
+### Step 3 — `relayer_estimate7710Transaction` or `relayer_estimate7710TransactionMultichain`: quote the fee (preferred)
 
 Once the signed bundle exists, call the matching estimate method with the **same `params` shape** as send (omit `context`; `taskId`, `destinationUrl`, and `memo` are optional and ignored for pricing):
 
@@ -142,7 +144,7 @@ Use when the bundle is **not** built yet — for example, browser permission UX 
 
 The delegation's caveat scope must allow at least `feeAmount` to be transferred to `feeCollector`. Under-paying causes `InsufficientPayment` (4200).
 
-### Step 4 — `relayer_send7710Transaction` (or `_Multichain`): submit the bundle
+### Step 4 — `relayer_send7710Transaction` or `relayer_send7710TransactionMultichain`: submit the bundle
 
 Choose a signing path first:
 
@@ -195,7 +197,7 @@ If polling is unavoidable, call `relayer_getStatus` with `{ id: <TaskId>, logs: 
 
 ## Decisions cheat sheet
 
-- **Quote fee how?**: when the signed bundle exists, prefer **`relayer_estimate7710Transaction` / `_Multichain`** — the relayer simulates gas and returns `requiredPaymentAmount` plus signed `context`. Use **`relayer_getFeeData`** only for rough quotes before the bundle is built (e.g. browser permission UX) or when estimate is unavailable.
+- **Quote fee how?**: when the signed bundle exists, prefer **`relayer_estimate7710Transaction`** (single-chain) or **`relayer_estimate7710TransactionMultichain`** (multichain) — the relayer simulates gas and returns `requiredPaymentAmount` plus signed `context`. Use **`relayer_getFeeData`** only for rough quotes before the bundle is built (e.g. browser permission UX) or when estimate is unavailable.
 - **Self-sponsored vs. sponsored**: if the same account pays the fee and executes the work, sign **one delegation** that scopes `feeAmount + workAmount` and bundle two `executions` (fee transfer + work). If a separate sponsor pays the fee, sign **two delegations** (one each from sponsor and delegator) and submit two `transactions[]` entries with their own `permissionContext`. The relayer merges them into a single `redeemDelegations` batch.
 - **`ScopeType` choice**: `ScopeType.Erc20TransferAmount` is simplest and works for fee + work transfers. Use `ScopeType.FunctionCall` (token + selector) when you need broader function coverage in one batch — the `Erc20TransferAmount` enforcer can revert with `CaveatEnforcer:invalid-call-type` for some batched call patterns.
 - **EIP-7702 authorization**: only one `authorizationList` entry is allowed per request. If both delegator and sponsor need an upgrade, do them in two separate calls (or upgrade one out-of-band first).
@@ -242,7 +244,7 @@ const taskId = await rpc("relayer_send7710Transaction", {
 
 ## Common error codes
 
-**Estimate responses**: `relayer_estimate7710Transaction*` returns `result.success: false` with an `error` string for validation and simulation failures (missing mock payment, fee below `minFee`, gas estimation revert). These are not always JSON-RPC errors — check `result.success` before send.
+**Estimate responses**: `relayer_estimate7710Transaction` and `relayer_estimate7710TransactionMultichain` return `result.success: false` with an `error` string for validation and simulation failures (missing mock payment, fee below `minFee`, gas estimation revert). These are not always JSON-RPC errors — check `result.success` before send.
 
 | Code | Meaning                       | Typical fix                                                                 |
 | ---- | ----------------------------- | --------------------------------------------------------------------------- |
