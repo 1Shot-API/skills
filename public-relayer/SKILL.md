@@ -1,6 +1,17 @@
 ---
 name: public-relayer
-description: Integrate a client app with the 1Shot public relayer JSON-RPC API to submit gas-abstracted EIP-7710 delegated transactions on EVM chains. Use this skill whenever a developer mentions the 1Shot relayer, gasless or gas-abstracted EVM transactions, ERC-7710 delegations, `relayer_send7710Transaction`, `relayer_send7710TransactionMultichain`, `relayer_estimate7710Transaction`, `relayer_estimate7710TransactionMultichain`, `relayer_getCapabilities`, `relayer_getFeeData`, or `relayer_getStatus`; wants to estimate or quote the cost of a relayer transaction; wants to upgrade an EOA to a `7702StatelessDelegator` smart account; sign delegations with `@metamask/smart-accounts-kit`; integrate a browser wallet flow with `window.ethereum`, `requestExecutionPermissions`, `decodeDelegations`, or EIP-7715; pay relayer fees in ERC-20 tokens; lock in a gas-price quote; build a webhook receiver for relayer status events; or verify Ed25519 webhook signatures from `/.well-known/jwks.json`. Trigger this skill even when the user does not name the relayer explicitly but is clearly trying to send a gas-abstracted EVM transaction through a third-party relay using EIP-7710 / EIP-7702.
+description: >-
+  Integrate a client app with the 1Shot public relayer JSON-RPC API to submit
+  gas-abstracted EIP-7710 delegated transactions on EVM chains. Use when the
+  host or backend calls relayer_* methods directly, redeems a delegation context
+  from wallet_requestExecutionPermissions (embedded 1Shot Wallet or MetaMask),
+  verifies relayer webhooks, or builds MetaMask/local-signer delegation flows.
+  Do NOT use for embedding wallet.1shotapi.com alone (OWSProxy, configure,
+  eth_requestAccounts, eth_sendTransaction) — the wallet calls the relayer
+  internally; use the 1shot-wallet skill instead. Trigger on relayer_send7710Transaction,
+  relayer_estimate7710Transaction, relayer_getCapabilities, relayer_getFeeData,
+  relayer_getStatus, EIP-7710/7715 delegations, requestExecutionPermissions,
+  decodeDelegations, or gas-abstracted txs via a third-party relay.
 ---
 
 # 1Shot Public Relayer (EIP-7710) Integration
@@ -17,6 +28,13 @@ The relayer accepts a signed MetaMask delegation from a `7702StatelessDelegator`
 - Estimating or quoting the relayer fee for a transaction before submit
 - Locking in a relayer gas price for a quote window
 - Receiving and verifying signed webhook events from the relayer
+- Redeeming a signed delegation `context` returned by the embedded 1Shot Wallet (`wallet_requestExecutionPermissions`) or MetaMask (`requestExecutionPermissions`)
+
+## When NOT to use this skill
+
+- **Embedding the 1Shot Wallet for standard sends** — `eth_sendTransaction` through OWSProxy; the wallet calls `relayer_*` internally. Use the **`1shot-wallet`** skill only.
+- **Theming, connect, credentials, analytics** — `configure`, `eth_requestAccounts`, OID4, `proxy.analytics`; **`1shot-wallet`** only.
+- **Optional tx status webhooks from embed** — set `configure.destinationUrl`; the wallet passes it to the relayer on send. Still no host relayer client.
 
 ## Endpoints and packages
 
@@ -268,19 +286,63 @@ const taskId = await rpc("relayer_send7710Transaction", {
 
 See [references/schemas.md](references/schemas.md) for the complete error catalog and full request/response schemas.
 
-## Composing with `webauthn-prf-wallet` for a fully non-custodial app
+## Integration paths with `1shot-wallet`
 
-The public relayer pairs naturally with the **`webauthn-prf-wallet`** skill (separately installed) to build a **fully non-custodial web3 application with no vendor lock-in and no business account required**:
+Three distinct paths — pick one before writing code:
 
-- `webauthn-prf-wallet` derives an EVM private key from the user's passkey via the WebAuthn PRF extension and keeps it inside an isolated iframe — the key never reaches the parent page or any server.
-- That passkey-derived account is the natural **delegator** in this skill's flow: have the iframe sign the EIP-7702 authorization, the `7702StatelessDelegator` upgrade, and each `createDelegation` payload.
-- The public relayer is an open JSON-RPC service (no API key, no Bearer token) that the user pays per-transaction in stablecoins. There is no relationship to lock in — anyone can stand up an alternate relayer that speaks the same `relayer_*` methods, and the client can switch by changing `RELAYER_URL`.
+| Path | Skills | Host calls `relayer_*`? |
+|------|--------|-------------------------|
+| **A — Embed only** | `1shot-wallet` | No |
+| **B — Embed + execute delegations** | `1shot-wallet` + `public-relayer` | Yes (redeem grant) |
+| **C — No embedded wallet** | `public-relayer` | Yes |
 
-End-to-end, the user owns their key (passkey), pays only the per-tx fee (ERC-20), and the application owns no custodial surface and no business credentials. Reach for this combo when a developer asks for a "passkey wallet that can transact without holding ETH" or "non-custodial app with no API keys to manage." Read `webauthn-prf-wallet/SKILL.md` for the client-side wallet pattern and use this skill for the relayer JSON-RPC flow.
+### Path A — Embed only (most common)
+
+Install **`1shot-wallet`** only. Wire `OWSProxy`, call `eth_sendTransaction` — the wallet signs delegations and submits to the relayer internally. No host relayer JSON-RPC code. Gas-abstracted sends and optional `configure.destinationUrl` webhooks work without this skill.
+
+### Path B — Embed + execute delegations (both skills)
+
+Use when the **host or backend** executes work using a user-granted delegation (session keys, offline execution, periodic ERC-20 grants). Install both skills; read **`1shot-wallet/SKILL.md`** for OWSProxy setup. Start with **`relayer_getCapabilities`** and note **`targetAddress`** (relayer redemption wallet on that chain).
+
+| Sub-path | Grant `to` | Host redelegates? | Example |
+|----------|------------|-------------------|---------|
+| **B1 — Direct** | `targetAddress` | No | [Example 0b](references/examples.md) |
+| **B2 — Session key** (recommended) | Host session account | Yes → `targetAddress` | [Example 0c](references/examples.md) |
+
+#### Path B1 — Direct grant to relayer
+
+Simpler prototype path: user grants the relayer directly.
+
+1. **`wallet_requestExecutionPermissions`** with **`to: targetAddress`** and periodic ERC-20 scope (budget ≥ fee + work).
+2. Wallet returns **`response.context`** (single signed delegation); host decodes with **`decodeDelegations`** + **`toRelayerJson`**, builds **`executions[]`**, then **`relayer_estimate7710Transaction`** / **`relayer_send7710Transaction`**.
+
+User delegates to the relayer address directly — fine for demos; prefer B2 for production session keys.
+
+#### Path B2 — Session key + redelegation (recommended)
+
+Production session-key path: user grants a **host-controlled session account**; host **redelegates** to the relayer with a **narrower, execution-specific** scope before submit.
+
+1. Host generates or loads a **session account** (local signer; private key stays in host memory — not the user's passkey).
+2. **`wallet_requestExecutionPermissions`** with **`to: sessionAccountAddress`** and periodic ERC-20 scope (offline/agent budget).
+3. Wallet returns **`response.context`** (parent grant). Host decodes; session account **redelegates** to **`targetAddress`** with narrower caveats for this execution (`FunctionCall` + `exactCalldata`, or `Erc20TransferAmount` capped to fee + work — same attenuation idea as in-wallet send).
+4. Build **`permissionContext`** as an encoded **delegation chain** (parent + signed redelegation) via **`encodeDelegations`**; estimate + **`relayer_send7710Transaction`** with **`permissionContext`** containing the full chain.
+5. Session account may need EIP-7702 smart-account shape on first use; include **`authorizationList`** on send when upgrading (same constraint as elsewhere in this skill).
+
+Redelegation may only **narrow** parent scope (caveats stack). See MetaMask kit [create redelegation](https://docs.metamask.io/smart-accounts-kit/guides/advanced-permissions/create-redelegation/) (`redelegatePermissionContext` or `createDelegation({ parentDelegation })`).
+
+The wallet also uses the relayer internally for in-wallet Send and for **`wallet_revokeExecutionPermission`** cancel — that is separate from Path B.
+
+Reach for Path B when a developer asks to **execute on the user's behalf while offline**, **redeem a periodic ERC-20 grant via relayer**, or **submit relayer bundles using a passkey-signed delegation from the embedded wallet** — not for generic "embed a passkey wallet." Prefer **B2** for session keys and agent execution.
+
+The public relayer is an open JSON-RPC service (no API key). Anyone can run an alternate relayer speaking the same `relayer_*` methods.
+
+### Path C — No embedded wallet
+
+MetaMask extension (`requestExecutionPermissions` + `window.ethereum`) or local/backend signers (`createDelegation` + `signDelegation`). The rest of this skill applies as written. See Example 0 in [references/examples.md](references/examples.md).
 
 ## Additional resources
 
 - [references/schemas.md](references/schemas.md) — full JSON-RPC method signatures, schemas, status/error codes, JWKS body shape. Read this when you need exact parameter shapes, the complete error catalog, or the on-the-wire webhook payload format.
-- [references/examples.md](references/examples.md) — runnable TypeScript patterns: browser extension (MetaMask + viem + EIP-7715 permissions), estimate-first single-chain and multichain flows, self-sponsored, sponsored, webhook receiver with Ed25519 verification. Read this when you're about to write client code or want to copy a known-good integration shape.
-- `webauthn-prf-wallet` skill — companion skill for client-side passkey-derived EVM keys held in an isolated iframe. Use together with this skill for a fully non-custodial setup.
+- [references/examples.md](references/examples.md) — runnable TypeScript patterns: MetaMask browser flow (Example 0), embedded wallet direct grant (Example 0b, Path B1), embedded wallet session key + redelegation (Example 0c, Path B2), estimate-first single-chain and multichain flows, self-sponsored, sponsored, webhook receiver with Ed25519 verification. Read this when you're about to write client code or want to copy a known-good integration shape.
+- `1shot-wallet` skill — embed the 1Shot Wallet (OWS Host Layer). Required for Path A and Path B; companion for **Path B** delegation execution only (not required for embed-only sends).
 - MetaMask Smart Accounts Kit — [install](https://docs.metamask.io/smart-accounts-kit/get-started/install/), [browser / EIP-7715 flow](https://docs.metamask.io/smart-accounts-kit/guides/advanced-permissions/execute-on-metamask-users-behalf/), [local signer / delegation flow](https://docs.metamask.io/smart-accounts-kit/guides/delegation/execute-on-smart-accounts-behalf/), [Advanced Permissions wallet-client reference](https://docs.metamask.io/smart-accounts-kit/reference/advanced-permissions/wallet-client/).

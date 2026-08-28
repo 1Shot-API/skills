@@ -91,30 +91,32 @@ Contents:
         - agent wallets
         - generate paylinks
 
-### `webauthn-prf-wallet`
+### `1shot-wallet`
 
-Guides a coding agent in implementing an **iframe-isolated, passkey-derived Ethereum wallet** using the WebAuthn PRF extension. The private key is deterministically derived from a user's passkey, lives only inside a same-origin isolated iframe (so the parent page's JavaScript can never read it), and the server never sees the key or anything derived from it. Includes a LongBlob + recovery-phrase fallback for platforms that don't support PRF.
+Guides a coding agent in embedding the **1Shot Wallet** from a Host Layer app using `@1shotapi/ows-provider`. The hosted Branding Layer at `wallet.1shotapi.com` handles passkey onboarding, signing consent, and credentials — your app wires `OWSProxy`, EIP-1193, and optional `configure` theming without building a wallet from scratch.
 
 ```bash
-npx skills add 1Shot-API/skills/webauthn-prf-wallet
+npx skills add 1Shot-API/skills/1shot-wallet
 ```
 
 Example prompts that trigger this skill:
 
-- "Add a passkey-based Ethereum wallet to my Next.js app."
-- "Derive a private key from a WebAuthn credential using the PRF extension."
-- "I want a non-custodial wallet that doesn't require a seed phrase."
-- "Check if the browser supports WebAuthn PRF before letting the user register."
+- "Embed wallet.1shotapi.com in my React app with OWSProxy."
+- "Theme the 1Shot embedded wallet with configure (product name and primary color)."
+- "Wire eth_requestAccounts from my dapp through the 1Shot wallet iframe."
+- "Add OID4 credential offer/present flows to my host app via OWS credentials RPC."
 
 Contents:
 
-- PRF output → secp256k1 key derivation (HKDF-SHA-256, range-validated)
-- Browser/OS/webview platform-support gating
-- Iframe isolation via Postmate RPC, including the `display:none` / user-activation gotchas
-- LongBlob (`credBlob` / `largeBlob`) and AES-encrypted recovery-phrase fallback
-- Framework-agnostic server integration (WebAuthn RP endpoints, challenge storage)
-- Concrete Next.js App Router walkthrough
-- Copy-ready TypeScript assets: `prfToValidEthPrivKey.ts`, `platformSupport.ts`, `WalletIframeSketch.ts`
+- OWS three-layer model (Host → Branding → Signing)
+- `OWSProxy.create`, `showWallet` / `hideWallet`, and EIP-1193 `request`
+- `configure` theming and copy overrides (Zod-validated partial merge)
+- `focusWallet` / `unfocusWallet`, `addAsset`, and `createAccount` custom RPC
+- Safari `/create/` first-party passkey handoff
+- `proxy.analytics` product events and EIP-1193 `chainChanged` / `accountsChanged` subscriptions
+- Credentials RPC when enabled in the wallet
+- Local dev / HTTPS / secure-context notes for passkeys
+- Hard rules: never embed the Signing Layer from the Host
 
 ## TODOs
 

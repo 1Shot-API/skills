@@ -96,6 +96,8 @@ export function computeFeeAmount(
 
 ## Example 0 — Browser extension flow (MetaMask + viem + EIP-7715 permissions)
 
+For embedded 1Shot Wallet flows see **Example 0b** (Path B1, direct grant to relayer) and **Example 0c** (Path B2, session key + redelegation — recommended).
+
 Use this shape for browser apps where the user signs with a wallet extension. Prefer extension permission requests over local `signDelegation` flows in this context.
 
 ```ts
@@ -212,6 +214,336 @@ Notes:
 - If `wallet_requestExecutionPermissions` is unavailable, the connected wallet likely does not support EIP-7715.
 - Keep local `createDelegation` + `signDelegation` for backend/script signers; do not force that path in browser extension UX.
 - Parse human amounts using `parseUnits` and token decimals; do not call `BigInt("0.01")`.
+
+---
+
+## Example 0b — Embedded wallet: direct grant to relayer (Path B1)
+
+Path **B1** from `SKILL.md`: user grants execution permission **directly to the relayer** through the embedded wallet; the **host** redeems via relayer JSON-RPC with a single delegation in `permissionContext`. Requires `@1shotapi/ows-provider` and the **`1shot-wallet`** skill for OWSProxy setup.
+
+For production session keys (grant to host session account, then redelegate to relayer), use **Example 0c** instead.
+
+Steps 1–2 and 4–5 mirror Example 0. Step 3 uses `wallet_requestExecutionPermissions` instead of MetaMask's `requestExecutionPermissions`.
+
+```ts
+import { OWSProxy } from "@1shotapi/ows-provider";
+import { decodeDelegations } from "@metamask/smart-accounts-kit/utils";
+import { encodeFunctionData, erc20Abi, parseUnits } from "viem";
+
+function relayerUrlForChain(chainId: string): string {
+  return chainId === "11155111" || chainId === "84532"
+    ? "https://relayer.1shotapi.dev/relayers"
+    : "https://relayer.1shotapi.com/relayers";
+}
+
+const chainId = "0x14a34"; // Base Sepolia (84532)
+const relayerUrl = relayerUrlForChain("84532");
+const rpcAt = <T>(method: string, params: unknown, id = 1) => rpc<T>(method, params, id, relayerUrl);
+
+const container = document.getElementById("wallet-container")!;
+const proxy = await OWSProxy.create(container, "https://wallet.1shotapi.com/");
+const accounts = await proxy.ethereum.request({ method: "eth_requestAccounts" });
+const account = accounts[0]!;
+
+// 1) capabilities
+const caps = await rpcAt<Record<string, {
+  feeCollector: `0x${string}`;
+  targetAddress: `0x${string}`;
+  tokens: { address: `0x${string}`; symbol?: string; decimals: number | string }[];
+}>>("relayer_getCapabilities", ["84532"]);
+const chainCaps = caps["84532"]!;
+const token = chainCaps.tokens.find((t) => t.symbol === "USDC")!;
+const tokenDecimals = Number(token.decimals);
+const targetAddress = chainCaps.targetAddress;
+
+// 2) fee quote
+const fee = await rpcAt<{
+  gasPrice: `0x${string}`;
+  rate: number;
+  minFee: string;
+  context: string;
+  targetAddress?: `0x${string}`;
+  feeCollector: `0x${string}`;
+  token: { address: `0x${string}`; decimals: number };
+}>("relayer_getFeeData", {
+  chainId: "84532",
+  token: token.address,
+});
+
+const estimatedGasUsed = 200_000n;
+const feeAmount = computeFeeAmount(fee, estimatedGasUsed);
+const workAmount = parseUnits("0.01", tokenDecimals);
+const totalAmount = feeAmount + workAmount;
+
+// 3) request permission from embedded wallet — B1: grant directly to relayer targetAddress
+proxy.showWallet();
+const responses = await proxy.ethereum.request({
+  method: "wallet_requestExecutionPermissions",
+  params: [
+    {
+      chainId,
+      from: account,
+      to: targetAddress,
+      permission: {
+        type: "erc20-token-periodic",
+        isAdjustmentAllowed: true,
+        data: {
+          tokenAddress: token.address,
+          periodAmount: `0x${totalAmount.toString(16)}`,
+          periodDuration: 86_400,
+        },
+      },
+    },
+  ],
+});
+
+const context = responses[0]?.context;
+if (!context) throw new Error("No permission context returned by wallet");
+const delegations = decodeDelegations(context).map((d) => toRelayerJson(d));
+
+const destinationAddress = "0x3e6a2f0CBA03d293B54c9fCF354948903007a798" as `0x${string}`;
+const feeTransferExecution = {
+  target: token.address,
+  value: "0",
+  data: encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [fee.feeCollector, feeAmount],
+  }),
+};
+const workExecution = {
+  target: token.address,
+  value: "0",
+  data: encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [destinationAddress, workAmount],
+  }),
+};
+
+const sendParams = {
+  chainId: "84532",
+  transactions: [
+    {
+      permissionContext: delegations,
+      executions: [feeTransferExecution, workExecution],
+    },
+  ],
+};
+
+// 4) estimate (preferred) then submit with price lock
+const estimate = await rpcAt<Estimate7710Result>(
+  "relayer_estimate7710Transaction",
+  sendParams,
+);
+if (!estimate.success) throw new Error(estimate.error ?? "estimate failed");
+
+const taskId = await rpcAt<string>("relayer_send7710Transaction", {
+  ...sendParams,
+  context: estimate.context,
+});
+
+console.log("submitted", taskId, "via", relayerUrl);
+```
+
+Notes:
+
+- **Path B1:** **`to` must be `targetAddress`** from `relayer_getCapabilities` so the relayer can redeem the grant directly.
+- User grants the relayer address directly — simpler for prototypes; prefer **Example 0c** for session keys.
+- The wallet signs the delegation inside the iframe (passkey ceremony); the host never sees the user's private keys.
+- Prefer **`relayer_estimate7710Transaction`** before send (as shown); Example 0 uses `relayer_getFeeData` for a simpler pre-grant fee display.
+- Revoke grants with **`wallet_revokeExecutionPermission`** (handled by the wallet + relayer internally).
+
+---
+
+## Example 0c — Embedded wallet: session key + redelegation (Path B2)
+
+Path **B2** from `SKILL.md` (recommended): user grants a **periodic budget** to a **host-controlled session account**; the host **redelegates** to relayer **`targetAddress`** with a narrower scope, then submits a **delegation chain** to the relayer.
+
+```ts
+import { randomBytes } from "node:crypto";
+import { OWSProxy } from "@1shotapi/ows-provider";
+import {
+  Implementation,
+  ScopeType,
+  createDelegation,
+  getSmartAccountsEnvironment,
+  toMetaMaskSmartAccount,
+} from "@metamask/smart-accounts-kit";
+import { decodeDelegations, encodeDelegations } from "@metamask/smart-accounts-kit/utils";
+import {
+  createPublicClient,
+  encodeFunctionData,
+  erc20Abi,
+  generatePrivateKey,
+  getAddress,
+  http,
+  parseUnits,
+  privateKeyToAccount,
+} from "viem";
+import { baseSepolia } from "viem/chains";
+
+function relayerUrlForChain(decimalChainId: string): string {
+  return decimalChainId === "11155111" || decimalChainId === "84532"
+    ? "https://relayer.1shotapi.dev/relayers"
+    : "https://relayer.1shotapi.com/relayers";
+}
+
+function randomSalt32(): `0x${string}` {
+  return `0x${randomBytes(32).toString("hex")}` as `0x${string}`;
+}
+
+const decimalChainId = "84532";
+const chainId = "0x14a34"; // Base Sepolia hex
+const relayerUrl = relayerUrlForChain(decimalChainId);
+const rpcAt = <T>(method: string, params: unknown, id = 1) => rpc<T>(method, params, id, relayerUrl);
+
+const publicClient = createPublicClient({ chain: baseSepolia, transport: http() });
+const environment = getSmartAccountsEnvironment(baseSepolia.id);
+
+// 0) Host session key — generate once per session; keep in memory only (never the user's passkey)
+const sessionAccount = privateKeyToAccount(generatePrivateKey());
+
+const container = document.getElementById("wallet-container")!;
+const proxy = await OWSProxy.create(container, "https://wallet.1shotapi.com/");
+const accounts = await proxy.ethereum.request({ method: "eth_requestAccounts" });
+const userAccount = accounts[0]!;
+
+// 1) capabilities
+const caps = await rpcAt<Record<string, {
+  feeCollector: `0x${string}`;
+  targetAddress: `0x${string}`;
+  tokens: { address: `0x${string}`; symbol?: string; decimals: number | string }[];
+}>>("relayer_getCapabilities", [decimalChainId]);
+const chainCaps = caps[decimalChainId]!;
+const token = chainCaps.tokens.find((t) => t.symbol === "USDC")!;
+const tokenDecimals = Number(token.decimals);
+const targetAddress = chainCaps.targetAddress;
+
+// 2) fee quote
+const fee = await rpcAt<{
+  gasPrice: `0x${string}`;
+  rate: number;
+  minFee: string;
+  context: string;
+  feeCollector: `0x${string}`;
+  token: { address: `0x${string}`; decimals: number };
+}>("relayer_getFeeData", {
+  chainId: decimalChainId,
+  token: token.address,
+});
+
+const estimatedGasUsed = 200_000n;
+const feeAmount = computeFeeAmount(fee, estimatedGasUsed);
+const workAmount = parseUnits("0.01", tokenDecimals);
+const totalAmount = feeAmount + workAmount;
+
+const destinationAddress = "0x3e6a2f0CBA03d293B54c9fCF354948903007a798" as `0x${string}`;
+const feeTransferExecution = {
+  target: token.address,
+  value: "0",
+  data: encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [fee.feeCollector, feeAmount],
+  }),
+};
+const workExecution = {
+  target: token.address,
+  value: "0",
+  data: encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [destinationAddress, workAmount],
+  }),
+};
+
+// 3) User grant — B2: to SESSION account (not targetAddress)
+proxy.showWallet();
+const responses = await proxy.ethereum.request({
+  method: "wallet_requestExecutionPermissions",
+  params: [
+    {
+      chainId,
+      from: userAccount,
+      to: sessionAccount.address,
+      permission: {
+        type: "erc20-token-periodic",
+        isAdjustmentAllowed: true,
+        data: {
+          tokenAddress: token.address,
+          periodAmount: `0x${totalAmount.toString(16)}`,
+          periodDuration: 86_400,
+        },
+      },
+    },
+  ],
+});
+
+const parentContext = responses[0]?.context;
+if (!parentContext) throw new Error("No permission context returned by wallet");
+const parentDelegations = decodeDelegations(parentContext);
+const rootDelegation = parentDelegations[0]!;
+
+// 4) Session account redelegates to relayer with narrower scope (one execution budget)
+const sessionSmartAccount = await toMetaMaskSmartAccount({
+  implementation: Implementation.Stateless7702,
+  address: sessionAccount.address,
+  client: publicClient,
+  signer: sessionAccount,
+});
+
+const redelegation = createDelegation({
+  to: getAddress(targetAddress),
+  from: sessionSmartAccount.address,
+  parentDelegation: rootDelegation,
+  environment,
+  salt: randomSalt32(),
+  scope: {
+    type: ScopeType.Erc20TransferAmount,
+    tokenAddress: getAddress(token.address),
+    maxAmount: totalAmount,
+  },
+});
+const signedRedelegation = await sessionSmartAccount.signDelegation({ delegation: redelegation });
+
+const chainContext = encodeDelegations([rootDelegation, signedRedelegation]);
+const delegations = decodeDelegations(chainContext).map((d) => toRelayerJson(d));
+
+const sendParams = {
+  chainId: decimalChainId,
+  transactions: [
+    {
+      permissionContext: delegations,
+      executions: [feeTransferExecution, workExecution],
+    },
+  ],
+};
+
+// 5) estimate (preferred) then submit with price lock
+const estimate = await rpcAt<Estimate7710Result>(
+  "relayer_estimate7710Transaction",
+  sendParams,
+);
+if (!estimate.success) throw new Error(estimate.error ?? "estimate failed");
+
+const taskId = await rpcAt<string>("relayer_send7710Transaction", {
+  ...sendParams,
+  context: estimate.context,
+  // Include authorizationList when session account needs EIP-7702 upgrade on first use.
+});
+
+console.log("submitted", taskId, "via", relayerUrl);
+```
+
+Notes:
+
+- **Grant `to` = session account**; **redelegation `to` = `targetAddress`**. Do not grant directly to the relayer in B2.
+- Redelegation may only **narrow** parent scope (MetaMask caveat stacking). The example caps ERC-20 transfer amount to `feeAmount + workAmount` for this submit.
+- For stricter one-shot control, use **`ScopeType.FunctionCall`** + **`exactCalldata`** on the redelegation (same pattern as in-wallet send in the embedded-wallet `TransactionUtils`).
+- The embedded-wallet host playground grants to a placeholder delegatee for UX only — production B2 must redelegate before `relayer_send7710Transaction`.
+- Session account upgrade: if the session EOA is not yet a smart account on chain, sign EIP-7702 **`authorizationList`** and attach on send (see Step 2 elsewhere in this skill).
+- Alternative API: **`redelegatePermissionContext`** on a session smart account extended with `erc7710WalletActions` — see [MetaMask create redelegation](https://docs.metamask.io/smart-accounts-kit/guides/advanced-permissions/create-redelegation/).
 
 ---
 

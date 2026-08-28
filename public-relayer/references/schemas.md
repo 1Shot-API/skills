@@ -195,7 +195,7 @@ type Send7710TransactionParams = {
 };
 
 type DelegatedTransaction7710 = {
-  permissionContext: Delegation7710[]; // delegation chain (length 1 for direct delegation)
+  permissionContext: Delegation7710[]; // delegation chain: length 1 = direct grant (Path B1); length 2+ = user grant → … → leaf delegated to relayer targetAddress (Path B2 session key + redelegation). Leaf `delegate` must equal relayer `targetAddress` from getCapabilities.
   executions: Execution7710[];
 };
 
