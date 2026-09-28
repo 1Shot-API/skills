@@ -35,6 +35,7 @@ The relayer accepts a signed MetaMask delegation from a `7702StatelessDelegator`
 - **Embedding the 1Shot Wallet for standard sends** — `eth_sendTransaction` through OWSProxy; the wallet calls `relayer_*` internally. Use the **`1shot-wallet`** skill only.
 - **Theming, connect, credentials, analytics** — `configure`, `eth_requestAccounts`, OID4, `proxy.analytics`; **`1shot-wallet`** only.
 - **Optional tx status webhooks from embed** — set `configure.destinationUrl`; the wallet passes it to the relayer on send. Still no host relayer client.
+- **Spending an `ERC20PeriodTransferEnforcer` budget you already hold** — you are the delegate key, not a dapp integrating the relayer. Use **`erc20-agent-budget`**. One self-sponsored delegation that puts the fee transfer and the work call in the same `executions[]` array reverts on that enforcer (`CaveatEnforcer:invalid-call-type` if batched, `invalid-method` if the work call is not `transfer`).
 
 ## Endpoints and packages
 
@@ -216,7 +217,7 @@ If polling is unavoidable, call `relayer_getStatus` with `{ id: <TaskId>, logs: 
 ## Decisions cheat sheet
 
 - **Quote fee how?**: when the signed bundle exists, prefer **`relayer_estimate7710Transaction`** (single-chain) or **`relayer_estimate7710TransactionMultichain`** (multichain) — the relayer simulates gas and returns `requiredPaymentAmount` plus signed `context`. Use **`relayer_getFeeData`** only for rough quotes before the bundle is built (e.g. browser permission UX) or when estimate is unavailable.
-- **Self-sponsored vs. sponsored**: if the same account pays the fee and executes the work, sign **one delegation** that scopes `feeAmount + workAmount` and bundle two `executions` (fee transfer + work). If a separate sponsor pays the fee, sign **two delegations** (one each from sponsor and delegator) and submit two `transactions[]` entries with their own `permissionContext`. The relayer merges them into a single `redeemDelegations` batch.
+- **Self-sponsored vs. sponsored**: if the same account pays the fee and executes the work, sign **one delegation** that scopes `feeAmount + workAmount` and bundle two `executions` (fee transfer + work). If a separate sponsor pays the fee, sign **two delegations** (one each from sponsor and delegator) and submit two `transactions[]` entries with their own `permissionContext`. The relayer merges them into a single `redeemDelegations` batch. An `ERC20PeriodTransferEnforcer` grant held by the delegate key is neither of those shapes — follow **`erc20-agent-budget`** (user pays `feeCollector` directly, action runs on a second context).
 - **`ScopeType` choice**: `ScopeType.Erc20TransferAmount` is simplest and works for fee + work transfers. Use `ScopeType.FunctionCall` (token + selector) when you need broader function coverage in one batch — the `Erc20TransferAmount` enforcer can revert with `CaveatEnforcer:invalid-call-type` for some batched call patterns.
 - **EIP-7702 authorization**: only one `authorizationList` entry is allowed per request. If both delegator and sponsor need an upgrade, do them in two separate calls (or upgrade one out-of-band first).
 - **Salt**: always pass a fresh random 32-byte hex `salt` to `createDelegation` to avoid replay collisions.
@@ -329,6 +330,8 @@ Production session-key path: user grants a **host-controlled session account**; 
 5. Session account may need EIP-7702 smart-account shape on first use; include **`authorizationList`** on send when upgrading (same constraint as elsewhere in this skill).
 
 Redelegation may only **narrow** parent scope (caveats stack). See MetaMask kit [create redelegation](https://docs.metamask.io/smart-accounts-kit/guides/advanced-permissions/create-redelegation/) (`redelegatePermissionContext` or `createDelegation({ parentDelegation })`).
+
+When the caller **is** the delegate key and the parent grant is `ERC20PeriodTransferEnforcer`, follow **`erc20-agent-budget`** instead of narrowing the redelegation with `Erc20TransferAmount`. That skill leaves the redelegation caveats empty, pays `feeCollector` from the user, and runs the action on a second root delegation.
 
 The wallet also uses the relayer internally for in-wallet Send and for **`wallet_revokeExecutionPermission`** cancel — that is separate from Path B.
 
