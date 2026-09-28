@@ -312,6 +312,81 @@ include a live Analytics panel fed by `proxy.analytics.on` (filter by `name`).
 
 EIP-7715 host RPCs: `wallet_requestExecutionPermissions`, `wallet_revokeExecutionPermission` (grant consent and on-chain revoke are wallet-driven).
 
+## EIP-7715 Permission Scopes
+
+The wallet accepts **kebab-case wire types** on `permission.type` (not the MetaMask smart-accounts-kit camelCase `ScopeType` names). Each scope becomes the primary delegation scope; optional **appended caveats** tighten execution further.
+
+### Scope catalog (kit + wallet)
+
+| Wire type | UI name | Required `permission.data` fields |
+|-----------|---------|-----------------------------------|
+| `erc20-token-periodic` | Recurring ERC-20 Transfers | `tokenAddress`, `periodAmount` (or `amount`), `periodDuration` (or `period` / `duration`); optional `startDate` / `startTime` |
+| `erc20-transfer-amount` | Transfer ERC-20 Tokens | `tokenAddress`, `maxAmount` (or `amount`) |
+| `erc20-streaming` | Stream ERC-20 Tokens | `tokenAddress`, `initialAmount`, `maxAmount`, `amountPerSecond`; optional start unix |
+| `native-transfer-amount` | Transfer Native Tokens | `maxAmount` (or `amount`); optional `allowedCalldata` or `exactCalldata` on scope data |
+| `native-streaming` | Stream Native Tokens | `initialAmount`, `maxAmount`, `amountPerSecond`; optional start unix; optional calldata pins |
+| `native-period-transfer` | Recurring Native Transfers | `periodAmount`, `periodDuration`; optional start unix; optional calldata pins |
+| `erc721-transfer` | Transfer NFT | `tokenAddress` (NFT contract), `tokenId` |
+| `ownership-transfer` | Transfer Contract Ownership | `contractAddress` (or `target`); optional `newOwner` |
+| `function-call` | Call Contract Functions | `targets[]`, `selectors[]` (or `methods[]`); optional `maxValue` / `valueLte`; optional `allowedCalldata` or `exactCalldata` |
+
+Custom wallet scopes (unchanged): `lifi-swap-periodic`, `lifi-swap-approve`.
+
+### Appended caveats (`caveats` on the request)
+
+Hosts may attach zero or more **appended** caveats on `IExecutionPermissionRequest.caveats` (sibling to `permission`, not inside `permission.data`). The wallet allowlists these nine wire types:
+
+`allowedCalldata`, `allowedTargets`, `allowedMethods`, `valueLte`, `timestamp`, `redeemer`, `limitedCalls`, `nonce`, `id`
+
+Each entry is `{ type, data }` where `data` matches the smart-accounts-kit caveat config for that type. The consent UI shows one card for the scope plus one card per appended caveat. On grant, the wallet merges scope + appended caveats via `createDelegation({ scope, caveats })`.
+
+### Example: ERC-20 transfer cap + allowed targets
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "wallet_requestExecutionPermissions",
+  "params": [
+    {
+      "chainId": "0x2105",
+      "to": "0x0000000000000000000000000000000000000001",
+      "permission": {
+        "type": "erc20-transfer-amount",
+        "isAdjustmentAllowed": false,
+        "data": {
+          "tokenAddress": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          "maxAmount": "0x5f5e100"
+        }
+      },
+      "rules": [{ "type": "expiry", "data": { "timestamp": 1893456000 } }],
+      "caveats": [
+        {
+          "type": "allowedTargets",
+          "data": {
+            "targets": ["0x0000000000000000000000000000000000000002"]
+          }
+        }
+      ]
+    }
+  ],
+  "id": 1
+}
+```
+
+### Attenuated response
+
+After the user approves, each `IExecutionPermissionResponse` permission echoes scope fields on `permission.data` and, when present, copies the request’s `caveats` array onto `permission.data.caveats` so the host can persist the exact grant terms.
+
+### Coding agent notes
+
+1. Pick the wire type from the table; never send kit `ScopeType` strings unless you also add a wallet mapping (only the kebab-case values above are supported).
+2. Put scope-specific limits in `permission.data`; put cross-cutting restrictions in top-level `caveats`.
+3. Use relayer-supported chains only (`useRelayer` networks); LiFi scopes additionally require a configured LiFi enforcer on that chain.
+4. Batch multiple permissions in one `wallet_requestExecutionPermissions` call — the wallet shows a single consent flow with stacked terms cards.
+5. For delegated relayer execution, grant `to` either the relayer target address or a session account you control; see **Relayer integration** and the `public-relayer` skill.
+
+Host-tunable labels for kit scope terms cards: `configure` → `copy.grantKitScopeTerms.*` (permission kind labels and row labels).
+
 ## Hard rules
 
 - Never embed the Signing Layer iframe from the Host — always Host → Branding → Signing.
