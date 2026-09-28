@@ -118,6 +118,29 @@ Contents:
 - Local dev / HTTPS / secure-context notes for passkeys
 - Hard rules: never embed the Signing Layer from the Host
 
+### `erc20-agent-budget`
+
+Tells an agent that already holds the delegate key and a signed `ERC20PeriodTransferEnforcer` grant how to spend that periodic ERC-20 budget through the 1Shot relayer, including a later period. The user account pays the relayer fee. The agent supplies the action calldata. The skill does not build a swap or bridge route.
+
+```bash
+npx skills add 1Shot-API/skills/erc20-agent-budget
+```
+
+Example prompts that trigger this skill:
+
+- "I have a periodic USDC delegation to this EOA. Spend 5 USDC of it on a swap through the relayer."
+- "Read getAvailableAmount on my ERC20PeriodTransferEnforcer grant and redeem it."
+- "Redelegate this agent budget to the relayer and pay the fee from the user's allowance."
+- "Execute this contract call with the periodic transfer allowance I was granted."
+
+Contents:
+
+- Preconditions: root grant to this key, user already a 7702 delegator, one agent authorization
+- Leaf-first redelegation with empty caveats, plus a separate agent delegation limited to this redemption
+- User executions: transfer the spend to the agent, then transfer the fee to `feeCollector`
+- Estimate, patch the fee, send with the quote context
+- `scripts/spend-budget.ts` for the bundle
+
 ## TODOs
 
 - execution simulation for batch and delegated transactions
