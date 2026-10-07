@@ -3,18 +3,20 @@ name: 1shot-wallet
 description: >-
   Integrate the 1Shot embedded wallet (OWS Host Layer) with @1shotapi/ows-provider.
   Use when embedding wallet.1shotapi.com, wiring OWSProxy, EIP-1193, credentials,
-  or custom RPC such as configure / focusWallet / addAsset / createAccount for
+  or custom RPC such as configure / switchChain / focusWallet / addAsset / createAccount / onramp / bridge / getUpgraded / getBitcoinBalance / requestCancelDelegations for
   theming, host-driven focus mode, tracked assets, and first-party Safari create.
 license: MIT
 metadata:
   author: 1Shot-API
   version: "0.2.0"
-  repository: https://github.com/1Shot-API/embedded-wallet
+  repository: https://github.com/1Shot-API/skills
 ---
 
 # 1Shot Embedded Wallet (Host integration)
 
 Teach an agent how to embed the **1Shot Wallet** Branding Layer from a Host Layer app using `@1shotapi/ows-provider`.
+
+> Use of 1Shot-hosted public infrastructure is subject to the [Public Infrastructure Terms](https://1shotapi.com/legal/public-infrastructure-terms) and [Acceptable Use Policy](https://1shotapi.com/legal/acceptable-use-policy). By accessing or using those hosted services, you agree to those terms.
 
 ```
 Host (your dapp)          @1shotapi/ows-provider → OWSProxy
@@ -109,12 +111,26 @@ await proxy.rpc("configure", options);
 | `copy.personalSign.rejectLabel` | string | Reject button |
 | `copy.personalSign.signLabel` | string | Sign button |
 | `copy.typedData.title` | string | EIP-712 modal title |
-| `copy.typedData.accountLabel` | string | Account field label |
+| `copy.typedData.body` | string | Intro paragraph |
+| `copy.typedData.networkLabel` | string | Network summary row label |
+| `copy.typedData.requestFromLabel` | string | Requesting domain row label |
+| `copy.typedData.accountLabel` | string | Signing account row label |
+| `copy.typedData.interactingWithLabel` | string | Verifying contract row label |
 | `copy.typedData.primaryTypeLabel` | string | Primary type label |
-| `copy.typedData.domainLabel` | string | Domain label |
-| `copy.typedData.messageLabel` | string | Message label |
+| `copy.typedData.messageSectionLabel` | string | Message card heading |
+| `copy.typedData.signingHint` | string | Hint shown while signing |
 | `copy.typedData.rejectLabel` | string | Reject button |
 | `copy.typedData.signLabel` | string | Sign button |
+| `copy.grantExecutionPermission.title` | string | ERC-20 periodic grant modal title |
+| `copy.grantExecutionPermission.permissionKindLabel` | string | Summary card eyebrow |
+| `copy.grantExecutionPermission.amountLabel` | string | Summary amount row |
+| `copy.grantExecutionPermission.transferWindowLabel` | string | Summary cadence row |
+| `copy.grantExecutionPermission.toLabel` | string | Delegate summary row |
+| `copy.grantExecutionPermission.viewOnExplorerLabel` | string | Delegate explorer link a11y |
+| `copy.grantExecutionPermission.justificationLabel` | string | Host justification in terms card |
+| `copy.grantExecutionPermission.advancedLabel` | string | Toggle for Unix start field |
+| `copy.grantExecutionPermission.grantLabel` | string | Grant button |
+| `copy.grantExecutionPermission.rejectLabel` | string | Reject button |
 | `copy.credentialOffer.title` | string | offer modal title |
 | `copy.credentialOffer.body` | string | supports `{issuerName}` `{issuerId}` |
 | `copy.credentialOffer.offeredHeading` | string | offered list heading |
@@ -186,17 +202,111 @@ Returns `{ ok: true, productName: string }` with the resolved product name after
 
 Unknown keys are rejected (Zod `.strict()`).
 
-See also [embedded-wallet README](https://github.com/1Shot-API/embedded-wallet/blob/main/README.md).
+See also the [embedded-wallet README](https://github.com/1Shot-API/embedded-wallet/blob/main/README.md).
+
+## Custom RPC — `switchChain`
+
+Switch the Branding Layer session chain. Accepts EVM hex ids **and** Bitcoin
+sentinels (`"Bitcoin"` mainnet, `"BitcoinTestnet"` testnet). Prefer this over
+EIP-1193 `wallet_switchEthereumChain` when the host catalog includes Bitcoin —
+EIP-1193 params are hex-only and reject non-hex ids with `Invalid params`.
+
+```ts
+await proxy.rpc("switchChain", { chainId: "Bitcoin" });
+await proxy.rpc("switchChain", { chainId: "0x2105" });
+```
+
+| Method | Params | Behavior |
+|--------|--------|----------|
+| `switchChain` | `{ chainId: \`0x…\` \| \`"Bitcoin"\` \| \`"BitcoinTestnet"\` }` | Bitcoin: session-only. EVM: same as `wallet_switchEthereumChain` via RpcHelper |
+
+Returns `{ ok: true, chainId }`. Bitcoin switches also emit EIP-1193
+`chainChanged` with the Bitcoin sentinel so hosts stay in sync.
+
+## Custom RPC — `getChainId`
+
+Read the Branding Layer **session** chain id (EVM hex or Bitcoin sentinel).
+Prefer this over EIP-1193 `eth_chainId` when the host catalog includes Bitcoin —
+`eth_chainId` only reflects the last EVM RpcHelper chain.
+
+```ts
+const { chainId } = await proxy.rpc("getChainId");
+// "0x2105" | "Bitcoin" | "BitcoinTestnet" | …
+```
+
+| Method | Params | Behavior |
+|--------|--------|----------|
+| `getChainId` | none | Returns `{ chainId }` from the wallet session store |
+
+## EVM balances (EIP-1193)
+
+Native and ERC-20 balances use the standard provider — no custom RPC. Branding
+proxies read methods (`eth_getBalance`, `eth_call`, …) to the active EVM chain
+JSON-RPC URL via `RpcHelper`.
+
+```ts
+// Native (wei hex string)
+const wei = await proxy.ethereum.request({
+  method: "eth_getBalance",
+  params: [address, "latest"],
+});
+
+// ERC-20 — encode balanceOf(address) calldata yourself (viem `encodeFunctionData`, etc.)
+const data = await proxy.ethereum.request({
+  method: "eth_call",
+  params: [{ to: tokenAddress, data: balanceOfCalldata }, "latest"],
+});
+```
+
+Notes:
+
+- Reads do **not** require unlock or `eth_requestAccounts`.
+- They use `RpcHelper`'s current **EVM** chain. If the session is on Bitcoin
+  (`getChainId` / `switchChain`), call `switchChain` to an EVM id first when you
+  care which chain is queried. Prefer custom `getChainId` for the session chain.
+- JSON-RPC `fetch` runs from the Branding origin (`wallet.1shotapi.com`); the
+  chain RPC must allow CORS from that origin.
+
+## Custom RPC — `getBitcoinBalance`
+
+There is no EIP-1193 equivalent for Bitcoin. Read confirmed + pending (mempool)
+satoshi balances for the unlocked wallet on Bitcoin mainnet or testnet.
+
+```ts
+const { chainId, address, confirmed, unconfirmed } = await proxy.rpc(
+  "getBitcoinBalance",
+  {}, // or omit; defaults to "Bitcoin"
+);
+// or: await proxy.rpc("getBitcoinBalance", { chainId: "BitcoinTestnet" });
+```
+
+| Method | Params | Behavior |
+|--------|--------|----------|
+| `getBitcoinBalance` | `{ chainId?: "Bitcoin" \| "BitcoinTestnet" }` (default `"Bitcoin"`) | Resolves the wallet SegWit address (session → cache → signer), returns satoshi balances |
+
+Returns `{ chainId, address, confirmed, unconfirmed }`:
+
+- `confirmed` — known on-chain balance (satoshi decimal string)
+- `unconfirmed` — pending mempool delta (satoshi decimal string; may be negative)
+
+Requires unlock/setup (`ensureReady`). Address is always the wallet’s — hosts
+cannot query arbitrary addresses.
 
 ## Custom RPC — `focusWallet` / `unfocusWallet`
 
 Host-controlled shell modes. Callers (not end users) switch between **General** (multi-chain tabs) and **Focused** (single chain + asset detail view).
 
 ```typescript
-// Lock to one chain + ERC-20 (or other) asset
+// Lock to one chain + ERC-20 (or native) asset
 await proxy.rpc("focusWallet", {
-  chainId: "0x4cef52", // Arc Testnet
+  chainId: "0x13b2", // Arc
   assetAddress: "0x3600000000000000000000000000000000000000", // USDC
+});
+proxy.showWallet();
+
+// Bitcoin — only one asset on the chain; assetAddress optional / ignored
+await proxy.rpc("focusWallet", {
+  chainId: "Bitcoin", // or "BitcoinTestnet"
 });
 proxy.showWallet();
 
@@ -206,10 +316,10 @@ await proxy.rpc("unfocusWallet");
 
 | Method | Params | Effect |
 |--------|--------|--------|
-| `focusWallet` | `{ chainId: \`0x…\`, assetAddress: \`0x…\` }` | Switches active chain, sets focused asset, shows Asset Details shell |
+| `focusWallet` | `{ chainId: \`0x…\` \| \`"Bitcoin"\` \| \`"BitcoinTestnet"\`, assetAddress?: \`0x…\` }` | Switches active chain, focuses shell. EVM requires `assetAddress`; Bitcoin ignores it and shows native BTC. |
 | `unfocusWallet` | none | Clears focus; returns to network selector + tabs |
 
-`focusWallet` returns `{ ok: true, mode: "focused", chainId, assetAddress }`.  
+`focusWallet` returns `{ ok: true, mode: "focused", chainId, assetAddress }` (`assetAddress` is `null` for Bitcoin).  
 `unfocusWallet` returns `{ ok: true, mode: "general" }`.
 
 Unlike `addAsset`, **`focusWallet` does not ask the user for confirmation** — hosts may temporarily lock the shell to any asset.
@@ -220,15 +330,17 @@ Propose a tracked **ERC-20** for the Balances tab. The wallet resolves the token
 
 ```typescript
 await proxy.rpc("addAsset", {
-  chainId: "0x4cef52", // Arc Testnet
+  chainId: "0x13b2", // Arc
   assetAddress: "0x3600000000000000000000000000000000000000", // USDC
+  // Optional HTTPS icon (shown in confirm + Balances). `http:` / `data:` rejected.
+  iconUrl: "https://example.com/token-icon.png",
 });
 proxy.showWallet();
 ```
 
 | Method | Params | Effect |
 |--------|--------|--------|
-| `addAsset` | `{ chainId: \`0x…\`, assetAddress: \`0x…\` }` | Probes ERC-20, shows confirm modal; on accept, adds to tracked assets |
+| `addAsset` | `{ chainId: \`0x…\`, assetAddress: \`0x…\`, iconUrl?: \`https://…\` }` | Probes ERC-20, shows confirm modal; on accept, adds to tracked assets (persists optional host icon) |
 
 Returns `{ ok: true, chainId, assetAddress }` when the user accepts.
 
@@ -236,7 +348,7 @@ Users can also add assets from the Balances tab without a host RPC. The Balances
 
 ## Custom RPC — `createAccount`
 
-Used by the first-party **`/create/`** host page (Safari passkey create). Hosts embedding the wallet normally do **not** call this — the branding layer opens `/create/` itself when needed.
+Used by the first-party **`/create/`** host page (Safari passkey create). Hosts embedding the wallet normally do **not** call this — the branding layer opens `/create/` itself when needed. Not exposed as a playground button.
 
 ```typescript
 const result = await proxy.rpc("createAccount");
@@ -250,6 +362,92 @@ await proxy.rpc("createAccount", { accountName: "My Wallet" });
 |--------|--------|--------|
 | `createAccount` | `{ accountName?: string }` optional | Runs setup create (passkey + relayer register); returns credential id |
 
+## Custom RPC — `onramp`
+
+Opens Circle fiat onramp fullscreen inside the Branding Layer for the unlocked EVM address.
+
+```typescript
+await proxy.rpc("onramp", {
+  chainId: 8453, // optional — decimal chain id for catalog scoping
+  amount: "50", // optional — amount hint when supported by the kit
+});
+// or: await proxy.rpc("onramp", {});
+```
+
+| Method | Params | Behavior |
+|--------|--------|----------|
+| `onramp` | `{ chainId?: number, amount?: string }` | Shows wallet, mounts Circle AppKit onramp; session minted via Relayer `POST /wallet/onramp` |
+
+Returns `{ ok: true }` when the user closes the onramp view. The Relayer holds the Circle kit key; the browser only receives a single-use session. When Branding is nested in a Host iframe, Buy prefers AppKit `openWindow`; top-level Branding uses `mountIframe`. Override with `localStorage.setItem("circlePopup", "true"|"false")`.
+
+## Custom RPC — `getUpgraded`
+
+Read-only EIP-7702 upgrade check for the unlocked EOA on one chain. Hosts can call this before `wallet_requestExecutionPermissions` to prepare the user (onramp for USDC, expect an activation fee, etc.). No flyout.
+
+```typescript
+const status = await proxy.rpc("getUpgraded", {
+  chainId: "0x2105", // Base — or "0x1", "Bitcoin", …
+});
+// { upgraded: true, codeAddress: "0x…" }
+// { upgraded: false }
+// { upgraded: false, error: "Chain Bitcoin is not an EVM chain" }
+```
+
+| Method | Params | Behavior |
+|--------|--------|----------|
+| `getUpgraded` | `{ chainId: string }` OWS id (`0x…` / `Bitcoin` / `BitcoinTestnet`) | On-chain `getCode` for the unlocked EOA; `upgraded` when delegated to the StatelessDelegator impl |
+
+Returns `{ upgraded: boolean, codeAddress?: EVMContractAddress, error?: string }`. Non-EVM chain ids and getCode failures soft-fail via `error` (do not throw). Locked wallet throws `"Wallet is locked — unlock before getUpgraded"`.
+
+## Custom RPC — `bridge`
+
+Opens the gasless CCTP USDC bridge (native TokenMessengerV2 + Circle Forwarding Service, submitted through the 1Shot relayer). Locked wallet → error. Cancel before success → `OwsUserRejectedError`. Execute failure → thrown error. Flyout closes when the RPC settles (`requestDisplay` / `hide`). Omit `sourceChainId` to use the session chain.
+
+When `amount`, `destinationChainId`, and `speed` are all provided, the wallet skips the setup form, auto-quotes, and shows the confirmation screen only (secondary action is **Cancel**). Partial params open setup with those values as defaults.
+
+```typescript
+await proxy.rpc("bridge", {
+  amount: "10.50",           // optional human USDC
+  sourceChainId: 8453,       // optional decimal; omit → session chain
+  destinationChainId: 1,     // optional; omit → user picks
+  speed: "fast",             // optional "fast" | "slow"; required with amount+dest to skip setup
+  tokenAddress: "0x…",       // optional; must be native CCTP USDC on source (default)
+});
+// or: await proxy.rpc("bridge", {});
+```
+
+| Method | Params | Behavior |
+|--------|--------|----------|
+| `bridge` | `{ amount?: string, sourceChainId?: number, destinationChainId?: number, speed?: "fast" \| "slow", tokenAddress?: string }` | Shows wallet, opens CCTP bridge for native USDC on a relayer CCTP source. Dest must be a same-network CCTP chain. Full params → confirm-only. |
+
+Returns `{ ok: true, burnTxHash, forwardTxHash? }` when the bridge succeeds (destination mint if Iris has completed). The user pays the relayer USDC fee (same path as Send); destination mint is Circle’s Forwarding Service — no dest-chain signature and no native gas.
+
+Product analytics: `BridgeOpened`, `BridgeCompleted`, `BridgeFailed`, `BridgeCancelled` (burn submit still also emits `TransactionSubmitted*`).
+
+## Custom RPC — `requestCancelDelegations`
+
+Batch on-chain revoke for permissions this host previously received from `wallet_requestExecutionPermissions`. Pass the grant response `context` values as `permissionContexts`. Opens the cancel confirm modal (same UI as the Delegations tab). Same-chain contexts are disabled in one relayer transaction; multi-chain selections submit one batched send per chain.
+
+Only vault rows whose `hostDomain` matches the calling host are accepted. If a `permissionContext` is missing locally (e.g. granted on another device), the wallet recovers credentials/delegations from the relayer once and retries the lookup before failing. Still-unknown contexts or permissions granted to another host throw `OwsInvalidParamsError` before the flyout opens. Unlock and interactive `eth_requestAccounts` also warm the vault from the relayer so cross-device grants are usually already present.
+
+```typescript
+// After wallet_requestExecutionPermissions → responses[].context
+const result = await proxy.rpc("requestCancelDelegations", {
+  permissionContexts: [
+    responses[0].context,
+    responses[1].context, // same or different chain — one modal
+  ],
+});
+// { transactionHashes: ["0x…", …] }  // one hash per unique chain
+// { transactionHashes: null }         // user skipped on-chain (vault delete only)
+```
+
+| Method | Params | Behavior |
+|--------|--------|----------|
+| `requestCancelDelegations` | `{ permissionContexts: HexString[] }` (min 1) | Domain-scoped batch cancel; flyout until grant/reject |
+
+User reject → `OwsUserRejectedError`. Prefer this over `wallet_revokeExecutionPermission` when canceling multiple grants or when the host should not touch permissions it did not receive.
+
 ## Other Host APIs
 
 | API | Use |
@@ -257,15 +455,15 @@ await proxy.rpc("createAccount", { accountName: "My Wallet" });
 | `proxy.ethereum.request(...)` | EIP-1193 (accounts, sign, chain, …) |
 | `proxy.ethereum.on` / `removeListener` | Branding→Host EIP-1193 notifications (`chainChanged`, `accountsChanged` via `ows:eip1193`) |
 | `proxy.credentials.*` | OID4 offer / present (when enabled in wallet) |
-| `proxy.analytics.on(listener)` / `.on(name, listener)` / `.off(listener)` | Branding→Host product analytics (`ows:analytics`) |
 | `proxy.showWallet()` / `hideWallet()` | Host-driven flyout without an EIP-1193 call |
-| `proxy.rpc(method, params)` | Custom Branding RPC (`configure`, `focusWallet`, `unfocusWallet`, `addAsset`, `createAccount`, …) |
+| `proxy.rpc(method, params)` | Custom Branding RPC (`configure`, `switchChain`, `getChainId`, `focusWallet`, `unfocusWallet`, `addAsset`, `createAccount`, `onramp`, `getUpgraded`, `bridge`, `requestCancelDelegations`, …) |
+| `proxy.analytics.on(listener)` / `.on(name, listener)` / `.off(listener)` | Branding→Host product analytics (`ows:analytics`) |
 
 Subscribe so in-wallet chain/account changes update host UI without polling:
 
 ```typescript
 proxy.ethereum.on("chainChanged", (chainId) => {
-  // hex chain id string
+  // EVM hex (`0x…`) or Bitcoin sentinel (`Bitcoin` / `BitcoinTestnet`)
 });
 proxy.ethereum.on("accountsChanged", (accounts) => {
   // EVM address array
@@ -301,6 +499,8 @@ The same rich payload is POSTed fire-and-forget to `POST /wallet/product-events`
 1Shot relayer. The local Host (`host/`) and marketing [wallet playground](https://www.1shotapi.com/playground)
 include a live Analytics panel fed by `proxy.analytics.on` (filter by `name`).
 
+EIP-7715 host RPCs: `wallet_requestExecutionPermissions`, `wallet_revokeExecutionPermission` (single `permissionContext`), `wallet_getSupportedExecutionPermissions`, `wallet_getGrantedExecutionPermissions`. For batch / domain-scoped cancel from a host, use custom RPC `requestCancelDelegations` with the grant `context` values.
+
 ## Relayer integration (when the host submits txs)
 
 - **Default sends:** `eth_sendTransaction` through OWSProxy — the wallet signs delegations and calls `relayer_*` internally. The host does **not** implement a relayer JSON-RPC client.
@@ -310,7 +510,21 @@ include a live Analytics panel fed by `proxy.analytics.on` (filter by `name`).
   - See **`public-relayer/SKILL.md`** (Integration paths with `1shot-wallet`).
 - **Status webhooks:** optional `configure.destinationUrl` — the wallet forwards it to the relayer on send. Still no direct relayer client in the host.
 
-EIP-7715 host RPCs: `wallet_requestExecutionPermissions`, `wallet_revokeExecutionPermission` (grant consent and on-chain revoke are wallet-driven).
+### Supported permission types
+
+| `permission.type` | Chains (v1) | Purpose |
+|-------------------|-------------|---------|
+| `erc20-token-periodic` | All relayer chains | Periodic ERC-20 `transfer` budget (`ScopeType.Erc20PeriodTransfer`) |
+| `lifi-swap-approve` | Arc (`0x13b2`), Base (`0x2105`), Ethereum (`0x1`) | One-time `approve(inputToken → LiFi Diamond)` onboarding |
+| `lifi-swap-periodic` | Arc, Base, Ethereum mainnet | Periodic LiFi swap via `LiFiSwapEnforcer` proxy (`0x29fcBBa852439616c4D614A2fa6411E42b760153`) |
+
+**`erc20-token-periodic` / `lifi-swap-periodic` amounts:** Hosts should pass `periodAmount` (hex atoms) to prefill the grant form. Playground demos default to **10 USDC** (`0x989680`).
+
+**`lifi-swap-approve` data:** `tokenAddress`, `spender` (LiFi Diamond). Amount is not pinned — the delegate may approve `maxUint256`.
+
+**`lifi-swap-periodic` data:** `lifiDiamond`, `tokenAddress` (input ERC-20), `outputAssetId` (`bytes32` hex), `outputRecipient` (`bytes32` hex), `destinationChainId` (number or decimal string), `quoteSigner`, `periodAmount` (hex atoms), `periodDuration` (seconds). Optional: `startDate`, `slippageBps` (default `50`, must be `< 10000`). Grant response echoes attenuated fields plus `delegationHash` on `permission.data`.
+
+Hosts that need both approve and swap should send **two** items in one `wallet_requestExecutionPermissions` batch. The wallet walks consent as a wizard (**Next** on intermediate forms, **Grant** on the last), then signs every delegation in **one** passkey ceremony and encrypts/uploads all vault rows in a **second** passkey ceremony. Each permission still gets its own vault row and `context`. **Do not** encode approve + swap as one `Delegation[]` chain (that would be treated as parent/child). Quote signing at redemption stays with the host/`quoteSigner` backend — the wallet only grants and signs the delegation.
 
 ## Hard rules
 
@@ -319,3 +533,5 @@ EIP-7715 host RPCs: `wallet_requestExecutionPermissions`, `wallet_revokeExecutio
 - Theme with `configure`; do not ask integrators to fork CSS for basic brand colors / product name.
 - Use `focusWallet` / `unfocusWallet` for host-driven single-asset flows; do not expose mode switching in the wallet UI.
 - Use `addAsset` when the host wants a lasting Balances entry; expect a confirm modal (contrast with `focusWallet`).
+- Use `onramp` (or the in-wallet Buy button) for fiat → crypto; do not put the Circle kit key in the Host or Branding Layer.
+- Use `bridge` (or the in-wallet Bridge button) for gasless CCTP USDC; do not require native gas or dest-chain `receiveMessage`.
