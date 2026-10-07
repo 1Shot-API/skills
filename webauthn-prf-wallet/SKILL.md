@@ -1,11 +1,23 @@
 ---
 name: webauthn-prf-wallet
 description: Build an iframe-isolated, passkey-derived Ethereum wallet using the WebAuthn PRF extension. Use when the user wants to implement a passkey-based wallet, derive an EVM private key from a passkey without server custody, add a non-custodial wallet pattern to a web app, harden wallet key handling against XSS via an isolated iframe, or check whether a client platform supports the WebAuthn PRF extension. Covers PRF + HKDF → secp256k1 key derivation, LongBlob fallback for compatibility, cross-frame RPC via Postmate, and browser/OS platform support gating.
+license: MIT
+metadata:
+  author: 1Shot-API
+  version: "1.0.0"
+  repository: https://github.com/1Shot-API/skills
 ---
 
 # WebAuthn PRF Wallet
 
 A reusable pattern for deriving an Ethereum private key from a user's passkey entirely on the client, with the key never leaving an isolated iframe. This skill captures the implementation from the 1Shot Payments app, distilled so that it can be dropped into any web application.
+
+## Install this skill (consumer / global)
+
+```bash
+npx skills add 1Shot-API/skills/webauthn-prf-wallet -g -a cursor -y
+```
+
 
 **What you get:**
 

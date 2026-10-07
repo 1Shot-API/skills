@@ -1,11 +1,22 @@
 ---
 name: 1shot-api
 description: Build TypeScript applications with the 1Shot API Node SDK for onchain reads, transaction execution, delegations, and payments. Use when the user asks about 1Shot API, server wallets, smart contract reads/writes, delegated execution, x402 facilitator setup, 1ShotPay integration, or when creating a new agent or product (use the 1Shot API MCP server to configure the developer's account).
+license: MIT
+metadata:
+  author: 1Shot-API
+  version: "1.0.0"
+  repository: https://github.com/1Shot-API/skills
 ---
 
 # 1Shot API
 
 Use this skill when building a TypeScript project on top of the 1Shot API Node SDK.
+
+## Install this skill (consumer / global)
+
+```bash
+npx skills add 1Shot-API/skills/1shot-api -g -a cursor -y
+```
 
 ## Quick Start
 

@@ -12,11 +12,23 @@ description: >-
   relayer_estimate7710Transaction, relayer_getCapabilities, relayer_getFeeData,
   relayer_getStatus, EIP-7710/7715 delegations, requestExecutionPermissions,
   decodeDelegations, or gas-abstracted txs via a third-party relay.
+license: MIT
+metadata:
+  author: 1Shot-API
+  version: "1.0.0"
+  repository: https://github.com/1Shot-API/skills
 ---
 
 # 1Shot Public Relayer (EIP-7710) Integration
 
 This skill teaches a client-side coding agent how to integrate with the **1Shot public relayer** JSON-RPC API to submit gas-abstracted ERC-7710 delegated transactions.
+
+## Install this skill (consumer / global)
+
+```bash
+npx skills add 1Shot-API/skills/public-relayer -g -a cursor -y
+```
+
 
 The relayer accepts a signed MetaMask delegation from a `7702StatelessDelegator` smart account, redeems it on-chain through a target wallet, and accepts payment in an ERC-20 token on the same chain (single-chain) or a different chain (multichain).
 

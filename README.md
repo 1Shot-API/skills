@@ -2,7 +2,7 @@
 
 A collection of Agent Skills published by [1Shot API](https://1shotapi.com/) for coding agents (Cursor, Claude, etc.) to build onchain applications. Each skill lives in its own folder and can be installed independently.
 
-**This repository is the canonical source** for first-party 1Shot skills. Product repos (open-wallet, embedded-wallet, relayer) do not publish or project-install these skills — developers install them globally.
+**This repository is the canonical source** for first-party 1Shot skills. Product repos (oneshot, relayer, clients, embedded-wallet, etc.) do not publish or project-install these skills — developers install them globally.
 
 ## Installing skills
 
@@ -42,6 +42,7 @@ npx skills add 1Shot-API/skills -l
 | [public-relayer](./public-relayer/) | `npx skills add 1Shot-API/skills/public-relayer -g -a cursor -y` |
 | [ows-branding-layer](./ows-branding-layer/) | `npx skills add 1Shot-API/skills/ows-branding-layer -g -a cursor -y` |
 | [webauthn-prf-wallet](./webauthn-prf-wallet/) | `npx skills add 1Shot-API/skills/webauthn-prf-wallet -g -a cursor -y` |
+| [unit-tests](./unit-tests/) | `npx skills add 1Shot-API/skills/unit-tests -g -a cursor -y` |
 
 ### `1shot-api`
 
@@ -63,6 +64,10 @@ Scaffold or extend an Open Wallet Standard (OWS) Branding Layer with `@1shotapi/
 
 Build a passkey-derived EVM wallet using the WebAuthn PRF extension in an isolated iframe (companion to `public-relayer` for non-custodial, no-API-key apps).
 
+### `unit-tests`
+
+Authors Jest unit tests for TypeScript services in the oneshot monorepo using testdouble, neverthrow `ResultAsync`, and a structured mocks class (Arrange/Act/Assert, negative-only `td.verify`).
+
 ## Maintaining skills
 
-When product APIs change (Host RPC, relayer JSON-RPC, OWS packages), update the matching skill in **this** repository in the same effort. Product-repo `AGENTS.md` files point maintainers here.
+When product APIs change (Host RPC, relayer JSON-RPC, OWS packages, M2M/SDK surfaces, oneshot test conventions), update the matching skill in **this** repository in the same effort. Product-repo `AGENTS.md` files point maintainers here.
