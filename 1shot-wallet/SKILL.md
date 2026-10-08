@@ -18,6 +18,12 @@ Teach an agent how to embed the **1Shot Wallet** Branding Layer from a Host Laye
 
 > Use of 1Shot-hosted public infrastructure is subject to the [Public Infrastructure Terms](https://1shotapi.com/legal/public-infrastructure-terms) and [Acceptable Use Policy](https://1shotapi.com/legal/acceptable-use-policy). By accessing or using those hosted services, you agree to those terms.
 
+## Install this skill (consumer / global)
+
+```bash
+npx skills add 1Shot-API/skills/1shot-wallet -g -a cursor -y
+```
+
 ```
 Host (your dapp)          @1shotapi/ows-provider → OWSProxy
   └── Branding iframe     https://wallet.1shotapi.com/
