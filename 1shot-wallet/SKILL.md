@@ -3,12 +3,15 @@ name: 1shot-wallet
 description: >-
   Integrate the 1Shot embedded wallet (OWS Host Layer) with @1shotapi/ows-provider.
   Use when embedding wallet.1shotapi.com, wiring OWSProxy, EIP-1193, credentials,
-  or custom RPC such as configure / switchChain / focusWallet / addAsset / createAccount / onramp / bridge / getUpgraded / getBitcoinBalance / requestCancelDelegations for
-  theming, host-driven focus mode, tracked assets, and first-party Safari create.
+  EIP-7715 wallet_requestExecutionPermissions (delegation creation, host rules[]
+  stacking, LiFi / Chainlink price rules), or custom RPC such as configure /
+  switchChain / focusWallet / addAsset / createAccount / onramp / bridge /
+  getUpgraded / getBitcoinBalance / requestCancelDelegations for theming,
+  host-driven focus mode, tracked assets, and first-party Safari create.
 license: MIT
-metadata:
+  metadata:
   author: 1Shot-API
-  version: "0.2.0"
+  version: "0.3.2"
   repository: https://github.com/1Shot-API/skills
 ---
 
@@ -17,6 +20,12 @@ metadata:
 Teach an agent how to embed the **1Shot Wallet** Branding Layer from a Host Layer app using `@1shotapi/ows-provider`.
 
 > Use of 1Shot-hosted public infrastructure is subject to the [Public Infrastructure Terms](https://1shotapi.com/legal/public-infrastructure-terms) and [Acceptable Use Policy](https://1shotapi.com/legal/acceptable-use-policy). By accessing or using those hosted services, you agree to those terms.
+
+## Install this skill (consumer / global)
+
+```bash
+npx skills add 1Shot-API/skills/1shot-wallet -g -a cursor -y
+```
 
 ```
 Host (your dapp)          @1shotapi/ows-provider → OWSProxy
@@ -499,7 +508,7 @@ The same rich payload is POSTed fire-and-forget to `POST /wallet/product-events`
 1Shot relayer. The local Host (`host/`) and marketing [wallet playground](https://www.1shotapi.com/playground)
 include a live Analytics panel fed by `proxy.analytics.on` (filter by `name`).
 
-EIP-7715 host RPCs: `wallet_requestExecutionPermissions`, `wallet_revokeExecutionPermission` (single `permissionContext`), `wallet_getSupportedExecutionPermissions`, `wallet_getGrantedExecutionPermissions`. For batch / domain-scoped cancel from a host, use custom RPC `requestCancelDelegations` with the grant `context` values.
+EIP-7715 host RPCs: `wallet_requestExecutionPermissions`, `wallet_revokeExecutionPermission` (single `permissionContext`), `wallet_getSupportedExecutionPermissions`, `wallet_getGrantedExecutionPermissions`. For batch / domain-scoped cancel from a host, use custom RPC `requestCancelDelegations` with the grant `context` values. See **EIP-7715 delegation creation** below.
 
 ## Relayer integration (when the host submits txs)
 
@@ -510,21 +519,149 @@ EIP-7715 host RPCs: `wallet_requestExecutionPermissions`, `wallet_revokeExecutio
   - See **`public-relayer/SKILL.md`** (Integration paths with `1shot-wallet`).
 - **Status webhooks:** optional `configure.destinationUrl` — the wallet forwards it to the relayer on send. Still no direct relayer client in the host.
 
-### Supported permission types
+## EIP-7715 delegation creation
 
-| `permission.type` | Chains (v1) | Purpose |
-|-------------------|-------------|---------|
-| `erc20-token-periodic` | All relayer chains | Periodic ERC-20 `transfer` budget (`ScopeType.Erc20PeriodTransfer`) |
-| `lifi-swap-approve` | Arc (`0x13b2`), Base (`0x2105`), Ethereum (`0x1`) | One-time `approve(inputToken → LiFi Diamond)` onboarding |
-| `lifi-swap-periodic` | Arc, Base, Ethereum mainnet | Periodic LiFi swap via `LiFiSwapEnforcer` proxy (`0x29fcBBa852439616c4D614A2fa6411E42b760153`) |
+Hosts request grants with EIP-1193 `wallet_requestExecutionPermissions`. The wallet builds MetaMask Smart Accounts Kit **Delegations**, shows consent UI, EIP-712-signs with the user’s DeleGator, encrypts vault rows, and returns one response per param entry (`context`, `delegationManager`, attenuated `permission`, …).
 
-**`erc20-token-periodic` / `lifi-swap-periodic` amounts:** Hosts should pass `periodAmount` (hex atoms) to prefill the grant form. Playground demos default to **10 USDC** (`0x989680`).
+### Request shape (mental model)
 
-**`lifi-swap-approve` data:** `tokenAddress`, `spender` (LiFi Diamond). Amount is not pinned — the delegate may approve `maxUint256`.
+```ts
+// params: IExecutionPermissionRequest[]  → one entry = one root Delegation
+{
+  chainId,           // hex EVM chain id
+  from?,             // optional; wallet uses unlocked account when omitted
+  to,                // delegate (bot / session / relayer target)
+  permission: {      // SINGULAR scope / product type — correct EIP-7715
+    type,            // e.g. "lifi-swap-periodic" | "erc20-token-periodic" | …
+    isAdjustmentAllowed,
+    data,            // type-specific fields only (never nest extra enforcers here)
+  },
+  rules?: [          // OPTIONAL host-stacked enforcers — sibling of permission
+    { type: string, data: Record<string, unknown> },
+  ],
+}
+```
 
-**`lifi-swap-periodic` data:** `lifiDiamond`, `tokenAddress` (input ERC-20), `outputAssetId` (`bytes32` hex), `outputRecipient` (`bytes32` hex), `destinationChainId` (number or decimal string), `quoteSigner`, `periodAmount` (hex atoms), `periodDuration` (seconds). Optional: `startDate`, `slippageBps` (default `50`, must be `< 10000`). Grant response echoes attenuated fields plus `delegationHash` on `permission.data`.
+| Concept | Rule |
+|---------|------|
+| `params[]` entries | **Multiple Delegations** (approve, fee, swap, hop-2, …). Batch = wizard consent, then **one** passkey sign for all, then vault upload. |
+| `permission` | **One** product/scope type per Delegation. Do **not** put multiple enforcers inside `permission`. |
+| `rules[]` | Host-stacked enforcers (EIP-7715). Wallet maps each to kit `addCaveat` / DF `caveats` at sign time; unknown `type` → reject before sign. |
+| Parent/child chains | **Do not** encode approve+swap as one `Delegation[]` authority chain. Separate `params` entries → separate `context`s. |
 
-Hosts that need both approve and swap should send **two** items in one `wallet_requestExecutionPermissions` batch. The wallet walks consent as a wizard (**Next** on intermediate forms, **Grant** on the last), then signs every delegation in **one** passkey ceremony and encrypts/uploads all vault rows in a **second** passkey ceremony. Each permission still gets its own vault row and `context`. **Do not** encode approve + swap as one `Delegation[]` chain (that would be treated as parent/child). Quote signing at redemption stays with the host/`quoteSigner` backend — the wallet only grants and signs the delegation.
+Discover support: `wallet_getSupportedExecutionPermissions`. Every permission type advertises the same `ruleTypes` — the full host `rules[]` allowlist (kit types + `chainlink-price-rule`). Host rules are validated identically for all permission types at grant time.
+
+### What the wallet builds per `permission.type`
+
+| `permission.type` | Chains (v1) | Built DF caveats (before host `rules[]`) |
+|-------------------|-------------|----------------------------------------|
+| `erc20-token-periodic` | All relayer chains | Kit `ScopeType.Erc20PeriodTransfer` (+ host rules merged via `createDelegation`) |
+| Kit scopes (`erc20-transfer-amount`, `erc20-streaming`, `native-transfer-amount`, `native-streaming`, `native-period-transfer`, `erc721-transfer`, `ownership-transfer`, `function-call`) | Relayer chains | Matching kit scope (+ host rules) |
+| `lifi-swap-approve` | Arc `0x13b2`, Base `0x2105`, Ethereum `0x1` | `allowedTargets(token)` → `allowedMethods(approve)` → `allowedCalldata(spender)` → `valueLte(0)` → **then** host `rules[]` |
+| `lifi-swap-periodic` | Arc, Base, Ethereum | `allowedTargets(lifiDiamond)` → `valueLte(0)` → `LiFiSwapEnforcer` (284-byte terms, `args: "0x"`) → **then** host `rules[]` |
+
+**`lifi-swap-approve` data:** `tokenAddress`, `spender` (LiFi Diamond). Amount is not pinned — delegate may approve `maxUint256`.
+
+**`lifi-swap-periodic` data:** `lifiDiamond`, `tokenAddress`, `outputAssetId` (`bytes32`), `outputRecipient` (`bytes32`), `destinationChainId` (number or decimal string), `quoteSigner`, `periodAmount` (hex atoms), `periodDuration` (seconds). Optional: `startDate`, `slippageBps` (default `50`, `< 10000`). Do **not** put price rules in `data` — use `rules[]`.
+
+**Amounts:** pass `periodAmount` as hex atoms. Playground demos often use **10 USDC** (`0x989680`).
+
+Grant response echoes attenuated fields plus `delegationHash` on `permission.data`. Host-stacked rules are echoed under `permission.data.caveats` when present (DF naming on the attenuated permission). Quote signing at redemption stays with the host/`quoteSigner` backend.
+
+Typical LiFi product batch: approve + fee (`erc20-token-periodic`) + swap (+ optional second-hop trio). Each item gets its own vault row and `context`.
+
+### Host-led rule stacking (`rules[]`)
+
+After the wallet’s fixed stack (scope or LiFi convenience caveats), validated host `rules` are **mapped to DF caveats and appended**. All caveats on a Delegation must pass (**AND**). Host rules are appended after the wallet stack; for LiFi+Chainlink that yields AllowedTargets → ValueLte → LiFiSwap → Chainlink (or additional kit types). Grant UI validates `rules[]` the same way for every permission type (periodic, kit scopes, LiFi).
+
+**Allowlisted `rules[].type` values:**
+
+| `type` | Packing | Notes |
+|--------|---------|-------|
+| `allowedCalldata` | Kit | `{ startIndex, value }` |
+| `allowedTargets` | Kit | `{ targets: address[] }` |
+| `allowedMethods` | Kit | `{ selectors: \`0x…\`[] }` |
+| `valueLte` | Kit | `{ maxValue }` (bigint / number / decimal string) |
+| `timestamp` | Kit | `{ afterThreshold, beforeThreshold }` Unix seconds |
+| `redeemer` | Kit | `{ redeemers: address[] }` |
+| `limitedCalls` | Kit | `{ limit }` |
+| `nonce` | Kit | `{ nonce }` hex |
+| `id` | Kit | `{ id }` |
+| `chainlink-price-rule` | Custom 68-byte terms | Enforcer `0x4dAEbF9C5813EFF2606acD41BA25e57841e7cb75`; grant-time `args: "0x"` |
+
+Any other `type` is rejected. Kit config shape is validated at `addCaveat` time; `chainlink-price-rule` is fully validated up front (trusted feed + field rules). Consent UI shows each host rule as its own terms card; Grant stays disabled until every rule is valid.
+
+#### `chainlink-price-rule` data
+
+Wallet hard-verifies `priceFeed` against a trusted list (ETH/BTC/PAXG USD on Ethereum mainnet; ETH/USD on Base). Malicious feeds never reach signing. `expectedDecimals` must match the feed (8 for these USD pairs).
+
+| Field | Relative (Dip=0 / Rise=1) | Absolute (Gte=2 / Lte=3) |
+|-------|---------------------------|--------------------------|
+| `windowSeconds` / `thresholdBps` | required (`thresholdBps` 1–9999) | set `0` |
+| `triggerPrice` | `"0"` | feed units as decimal string (`> 0`) |
+| `maxStaleSeconds` | `> 0` | `> 0` |
+| `minGapSeconds` | `≥ 0` | `≥ 0` |
+
+Terms packing matches [ChainlinkPriceRuleLib](https://github.com/1Shot-API/delegation-framework/blob/main/src/libraries/ChainlinkPriceRuleLib.sol) (68 bytes). Redeemer fills `args` with `abi.encode(uint80 referenceRoundId)` at execution — not part of the grant signature. See the [wallet integration guide](https://github.com/1Shot-API/delegation-framework/blob/main/ChainlinkPriceRuleEnforcer-Wallet-Integration.md).
+
+#### Example — LiFi swap + Chainlink dip (Pattern A)
+
+```ts
+const responses = await proxy.ethereum.request({
+  method: "wallet_requestExecutionPermissions",
+  params: [
+    {
+      chainId: "0x13b2",
+      from: userAddress,
+      to: quoteSigner, // or session account / relayer target
+      permission: {
+        type: "lifi-swap-approve",
+        isAdjustmentAllowed: true,
+        data: { tokenAddress: usdc, spender: lifiDiamond },
+      },
+    },
+    {
+      chainId: "0x13b2",
+      from: userAddress,
+      to: quoteSigner,
+      permission: {
+        type: "lifi-swap-periodic",
+        isAdjustmentAllowed: true,
+        data: {
+          lifiDiamond,
+          tokenAddress: usdc,
+          outputAssetId,      // bytes32
+          outputRecipient,    // bytes32
+          destinationChainId: "1",
+          quoteSigner,
+          periodAmount: "0x989680", // 10 USDC
+          periodDuration: 86400,
+          slippageBps: 50,
+        },
+      },
+      // Host stacking — NOT nested under permission.data
+      rules: [
+        {
+          type: "chainlink-price-rule",
+          data: {
+            priceFeed: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419", // ETH/USD
+            ruleKind: 0,           // Dip
+            expectedDecimals: 8,
+            windowSeconds: 86400,
+            thresholdBps: 1000,    // 10%
+            maxStaleSeconds: 3600,
+            minGapSeconds: 60,
+            triggerPrice: "0",
+          },
+        },
+      ],
+    },
+  ],
+});
+// Decode each responses[i].context with decodeDelegations for redeem / storage
+```
+
+Signed swap DF `Caveat[]` includes AllowedTargets, ValueLte, LiFiSwapEnforcer, and ChainlinkPriceRuleEnforcer. Host/backend patches Chainlink (and LiFi quote) **args** at redeem time via the relayer path (`public-relayer` skill).
 
 ## Hard rules
 
@@ -535,3 +672,5 @@ Hosts that need both approve and swap should send **two** items in one `wallet_r
 - Use `addAsset` when the host wants a lasting Balances entry; expect a confirm modal (contrast with `focusWallet`).
 - Use `onramp` (or the in-wallet Buy button) for fiat → crypto; do not put the Circle kit key in the Host or Branding Layer.
 - Use `bridge` (or the in-wallet Bridge button) for gasless CCTP USDC; do not require native gas or dest-chain `receiveMessage`.
+- Stack extra enforcers via sibling `rules[]` on `wallet_requestExecutionPermissions` — never nest them in `permission.data`, and never invent unlisted rule `type`s. (DF “caveats” exist only after the wallet maps `rules` at sign time.)
+- Keep approve / fee / swap as separate `params` entries (separate Delegations), not one authority chain.
