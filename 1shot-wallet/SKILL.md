@@ -504,8 +504,13 @@ proxy.analytics.on("PersonalSign", (event) => {
 | `DelegationCreated` / `DelegationCreateFailed` / `DelegationCreateCancelled` | EIP-7715 grant | `accountAddress`, `chainId`, `durationMs` |
 | `DelegationCancelled` / `DelegationCancelFailed` / `DelegationCancelAborted` | EIP-7715 revoke | `accountAddress`, `chainId`, `txHash`, `durationMs` |
 
+On `*Failed` events, `errorCode` is `Name: message` (up to 255 chars — e.g.
+`OwsInvalidRequestError: Passkey does not support PRF or PRF output missing`), not a bare
+error class name.
+
 The same rich payload is POSTed fire-and-forget to `POST /wallet/product-events` on the
-1Shot relayer. The local Host (`host/`) and marketing [wallet playground](https://www.1shotapi.com/playground)
+1Shot relayer (relayer copy also carries `platform` / `os` / `browser` / `isMobile` /
+`userAgent` props). The local Host (`host/`) and marketing [wallet playground](https://www.1shotapi.com/playground)
 include a live Analytics panel fed by `proxy.analytics.on` (filter by `name`).
 
 EIP-7715 host RPCs: `wallet_requestExecutionPermissions`, `wallet_revokeExecutionPermission` (single `permissionContext`), `wallet_getSupportedExecutionPermissions`, `wallet_getGrantedExecutionPermissions`. For batch / domain-scoped cancel from a host, use custom RPC `requestCancelDelegations` with the grant `context` values. See **EIP-7715 delegation creation** below.
