@@ -15,7 +15,8 @@ npm install \
 
 Notes:
 
-- `viem` is a peer of `ows-signer-utils` (EVM helpers).
+- `viem` is a peer of `ows-signer-utils` (EVM helpers); `@solana/kit` is an optional peer for `toKitPartialSigner`.
+- Solana chain ids in `ows-types` are CAIP-2 / Wallet Standard (`solana:mainnet`, `solana:devnet`, …). Host `proxy.solana.*` forwards wire methods; hosts opt in to discovery with `proxy.solana.registerSolanaWallet()` (Wallet Standard on the Host window — not auto-registered in `OWSProxy.create`).
 - `postmate` and `zod` are **transitive** via `ows-wallet-utils` — do not vendor Postmate; add a direct `zod` dep only if you author custom `registerRpc` schemas.
 - `@1shotapi/ows-signer` is plain JS sources. Prefer **copy or static-serve** into your app (no build step). Same origin as branding so `rpId === location.hostname`. Consuming it solely as an npm import of TS modules is not the reference pattern.
 - `@1shotapi/ows-provider` is for **host** apps only — omit from a branding-only package unless the same origin also serves a demo host.
@@ -32,9 +33,9 @@ npm install ../open-wallet/packages/ows-types
 | Package | Import surface | Branding uses it for |
 |---------|----------------|----------------------|
 | `ows-types` | primitives, errors, credentials, EIP-1193 / EIP-7715 tables, `CredentialCryptoUtils`, `PresentationUtils`, `ProofUtils` | Branded values, holder signer bridge, shared errors |
-| `ows-wallet-utils` | `OWSWallet`, `RpcHelper` (+ optional `executionPermissions` hooks), display child client, `wallet.analytics.emit`, `wallet.providerEvents.emit` | Postmate child, EIP-1193 / custom RPC registration, reads/chain, `requestDisplay`, Branding→Host analytics + EIP-1193 events |
+| `ows-wallet-utils` | `OWSWallet`, `RpcHelper` (+ optional `executionPermissions` hooks), display child client, `wallet.analytics.emit`, `wallet.providerEvents.emit`, `wallet.bitcoin.register` / `wallet.solana.register` | Postmate child, EIP-1193 / custom RPC registration, reads/chain, `requestDisplay`, Branding→Host analytics + EIP-1193 events; Solana Host wire (`solana.*`) when you register an `IOpenWalletSolanaProvider` |
 
-| `ows-signer-utils` | `OWSSigner`, `SignHelper`, `showSignerCeremonyPanel`, `evm.*` | Nested signer iframe, consent→sign wiring, digests → signatures |
+| `ows-signer-utils` | `OWSSigner`, `SignHelper`, `showSignerCeremonyPanel`, `evm.*`, `solana.*` (`signMessage` / `signTransaction`, optional `toKitPartialSigner`) | Nested signer iframe, consent→sign wiring, digests → signatures |
 | `ows-oid4` | `CredentialsHelper`, `issueCredentialAfterApproval`, `presentCredentialAfterApproval`, HTTP OID4 clients | Thin accept/present adapter + branding `approveAnd*` ownership |
 | `ows-signer` | static files | Custody kernel under `/signer/` |
 
@@ -52,7 +53,7 @@ There is **no** branding-core / registry package. App-local UI and wiring live i
 Mirror `examples/general-wallet`:
 
 - Branding app may use Vite `base: "/wallet/"` for the UI.
-- Signer is served at **`/signer/` outside that base** via middleware so WebAuthn + nest stay same-origin (`vite.config.ts` `serveSignerPlugin`).
+- Signer is served at **`/signer/` outside that base** via middleware so WebAuthn + nest stay same-origin (`vite.config.ts` `serveSignerPlugin`). Production/dev CSP on `/signer/` must include `frame-ancestors 'self'`.
 - HTML shell: `signer-static/index.html`; JS from package `src/`.
 - Prod: `scripts/copy-signer.mjs` → `dist/signer/`.
 

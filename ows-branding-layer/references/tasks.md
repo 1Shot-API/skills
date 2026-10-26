@@ -7,7 +7,7 @@ Paths below are under `examples/general-wallet/` unless noted.
 ## 1. Scaffold
 
 1. Install packages (see [packages.md](packages.md)).
-2. Serve `@1shotapi/ows-signer` as static **`/signer/` on the same origin** as branding (`rpId === location.hostname`).
+2. Serve `@1shotapi/ows-signer` as static **`/signer/` on the same origin** as branding (`rpId === location.hostname`). Set CSP `frame-ancestors 'self'` on `/signer/`. Cross-origin CDN signer embeds are not supported.
    - Dev: Vite middleware maps `/signer/` → `signer-static/index.html` and `/signer/src/` → package `src/` (**outside** Vite `base`, e.g. `/wallet/`). See `vite.config.ts`.
    - Prod: `scripts/copy-signer.mjs` into `dist/signer/`.
 3. Signer URL: `new URL("/signer/", window.location.origin).href` (origin root, not under app `base`).

@@ -6,14 +6,14 @@
 |-------|------------|------------|
 | Host | Integrator dapp | EIP-1193 / credentials proxy; must be secure context if it embeds HTTPS wallet |
 | Branding | Wallet origin (your product) | Branding, consent, app-owned UI + SDK helpers |
-| Signing | Nested iframe (prefer same origin as branding) | Passkeys / PRF; minimal attack surface |
+| Signing | Nested iframe (**same origin** as branding) | Passkeys / PRF; minimal attack surface |
 
 ## Origins and `rpId`
 
 - Signing Layer `rpId` is always `window.location.hostname` of the signer document.
-- Prefer **same origin** for branding + signer (shared passkey namespace).
+- **Require same origin** for branding + signer (shared passkey namespace). `OWSSigner.create` rejects a cross-origin `signerUrl`; the Signing Layer rejects parent `postMessage` when `event.origin !== location.origin`.
 - Reference layout: branding UI may live under a path (`/wallet/`) while signer document is at `/signer/` on the **same origin**.
-- Canonical CDN / on-chain gateway is an alternative shared `rpId` for all integrators.
+- Serve `/signer/` with CSP including `frame-ancestors 'self'` so foreign sites cannot embed the signer. Cross-origin CDN/IPFS signer embeds are not supported.
 
 ## Secure contexts
 

@@ -1,4 +1,4 @@
----
+﻿---
 name: ows-branding-layer
 description: >-
   Build an Open Wallet Standard (OWS) Branding Layer with @1shotapi/ows-wallet-utils,
@@ -64,7 +64,7 @@ npm install \
   @1shotapi/ows-oid4 \
   viem
 # zod is transitive via ows-wallet-utils — add a direct dep only for custom registerRpc schemas
-# Serve/copy ows-signer HTML+JS from the same origin as branding (rpId = signer hostname)
+# Required: serve ows-signer HTML+JS on the same origin as branding (/signer/; CSP frame-ancestors 'self')
 ```
 
 Details: [references/packages.md](references/packages.md)
@@ -78,7 +78,7 @@ Branding Layer Progress:
 - [ ] 1. Scaffold — packages + serve Signing Layer on same origin at /signer/
 - [ ] 2. Unlock — passkey create/login (`awaitSignerReady` vs `ensureReady`)
 - [ ] 3. Display shell — requestDisplay / hide + app-owned modal queue
-- [ ] 4. Host RPC — EIP-1193 (RpcHelper + account connect) and/or custom registerRpc
+- [ ] 4. Host RPC — EIP-1193 (RpcHelper + account connect) and/or custom registerRpc (optional `wallet.solana.register` / `wallet.bitcoin.register`)
 - [ ] 5. Signing consent — SignHelper + app approval UI
 - [ ] 6. Recovery — create/restore via `OWSSigner` auto ceremony panel (no iframe reparent)
 - [ ] 7. Credentials — CredentialsHelper + branding `approveAndAcceptOffer` / `approveAndPresent` (optional)
@@ -145,6 +145,46 @@ Split readiness in your app:
 For custom RPCs such as `eth_sendTransaction` or future ERC-7710 sends, use the same **centralized signed-action gate**: setup-only before consent when the credential is missing; one passkey ceremony for the sign itself when the credential is known.
 
 Restore-backup must use **`awaitSignerReady` only** — calling `ensureReady` first can force setup/login before recovery.
+
+### Solana Host wire (`wallet.solana.register`)
+
+Hosts that call `proxy.solana.registerSolanaWallet()` (Wallet Standard) or `proxy.solana.*` need Branding handlers. Register the full `IOpenWalletSolanaProvider`:
+
+```ts
+wallet.solana.register({
+  async getAccountAddress() {
+    await ensureReady();
+    // session → storage → signer.solana.getAccountAddress()
+    return address;
+  },
+  async signMessage(params) {
+    // requestDisplay → SolanaSignModal consent → signer.solana.signMessage
+    // return { signatures: SolanaSignature[] }
+  },
+  async signIn(params) {
+    // Resolve SIWS defaults → SiwsModal → signer.solana.signMessage([utf8])
+    // return { account, signedMessage: base64, signature }
+  },
+  async signTransaction(params) {
+    // Cluster bind → decode/summary + simulate (warn) → SolanaSignAndSendModal
+    // → signer.solana.signTransaction → { signatures }
+  },
+  async signAndSendTransaction(params) {
+    // Same consent → sign → attach wire → Alchemy sendRawTransaction
+    // → { signature: SolanaTransactionHash }
+  },
+});
+```
+
+**Tx ownership:** Branding owns Alchemy simulate/submit for `signAndSendTransaction`. Fee payer must be the user; reject extra required signers. Hosts never pass an Alchemy key.
+
+Mirror pattern: embedded-wallet `registerSolanaProvider` + `SolanaSignModals` (and `registerBitcoinProvider` for Bitcoin). Configure copy keys: `copy.solanaSign`, `copy.siws`, `copy.solanaSignAndSend`, `copy.solana` (shell + SPL Add Asset / rent warnings).
+
+### Solana SPL / tracked assets
+
+Unify EVM + Solana under one `KnownAsset` / `TrackedAsset` model with `EAssetType.Spl` (do not overload `Erc20`). Refined aliases: `SolanaKnownAsset` / `SolanaTrackedAsset`. Persist `ataAddress` (`SolanaATAAddress` from ows-types) + `ataRentPaid` on tracked rows only — never put ATA on catalog `KnownAsset`. TrackedAssetId for Solana is case-preserving base58 (`${chainId}:${mint}`).
+
+Host `addAsset` accepts Solana CAIP + mint; Branding should resolve **catalog mints only** for MVP, `ensureAta` (CreateIdempotent; user pays rent), then `trackedAssetRepository.add` with ATA fields. Primary UI never shows ATA; Receive = wallet pubkey + short “senders create token accounts” copy. SPL send may include dest CreateIdempotent + rent line on the confirm sheet.
 
 ## Hard rules (from OWS)
 

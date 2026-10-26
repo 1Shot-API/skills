@@ -9,9 +9,9 @@ description: >-
   getUpgraded / getBitcoinBalance / requestCancelDelegations for theming,
   host-driven focus mode, tracked assets, and first-party Safari create.
 license: MIT
-  metadata:
+metadata:
   author: 1Shot-API
-  version: "0.3.2"
+  version: "0.3.3"
   repository: https://github.com/1Shot-API/skills
 ---
 
@@ -63,13 +63,61 @@ proxy.showWallet();
 
 // EIP-1193
 const accounts = await proxy.ethereum.request({ method: "eth_requestAccounts" });
+
+// Optional: Solana Wallet Standard discovery (never auto-registered in create)
+proxy.solana.registerSolanaWallet(); // optional { name?, icon? }
 ```
+
+### Solana — Wallet Standard (`proxy.solana`)
+
+Solana dapps discover wallets via **Wallet Standard** on the Host page (not a Phantom `window.solana` shim). Opt in explicitly after `OWSProxy.create`:
+
+```ts
+import { getWallets } from "@wallet-standard/app";
+
+proxy.solana.registerSolanaWallet();
+console.log(getWallets().get().map((w) => w.name)); // includes "1Shot Wallet"
+
+// Cleanup (also runs from proxy.destroy()):
+proxy.solana.unregisterSolanaWallet();
+```
+
+| Surface | Notes |
+|---------|--------|
+| Chains | `solana:mainnet`, `solana:devnet` |
+| Features | `standard:connect` / `disconnect` / `events`, `solana:signMessage`, `solana:signIn`, `solana:signTransaction`, `solana:signAndSendTransaction` |
+| Connect | Calls Branding `solana.getAccountAddress` (session → cache → signer) |
+| `signMessage` | Branding consent (`SolanaSignModal`) → Ed25519; Standard returns `{ signedMessage: input.message, signature, signatureType: "ed25519" }` |
+| `signIn` (SIWS) | Branding builds CAIP-122 message + `SiwsModal`; returns `{ account, signedMessage, signature }` — verifiers must use returned bytes |
+| `signTransaction` | Branding consent → Ed25519 over message bytes; Host merges into wire. No Branding RPC submit. Cluster must match wallet Solana selection when provided. |
+| `signAndSendTransaction` | Same consent + sign; **Branding submits via Alchemy** and returns a base58 tx signature. Hosts do not supply an RPC URL or API key. Fee payer must be the user. |
+
+Wire methods also exist on `proxy.solana` for non-Standard hosts:
+
+```ts
+// Arbitrary message (UTF-8 → base64 on the wire)
+const { signatures } = await proxy.solana.signMessage({
+  messages: [ConversionUtils.bytesToBase64(new TextEncoder().encode("hello"))],
+});
+
+// Sign-In With Solana (wallet fills omitted defaults)
+const { account, signedMessage, signature } = await proxy.solana.signIn({
+  domain: DomainString(window.location.host),
+  uri: UriString(window.location.origin),
+  chainId: "solana:mainnet", // or omit → session Solana chain / mainnet
+});
+
+// Prefer Wallet Standard for txs (Host builds wire; Branding submits on signAndSend):
+// wallet.features["solana:signAndSendTransaction"].signAndSendTransaction({ account, chain, transaction })
+```
+
+Switch the wallet to the target Solana cluster (`switchChain` / UI) before signing txs. Branding must `wallet.solana.register(provider)` or Host calls reject.
 
 ### Local / HTTPS notes
 
 - Passkeys require a **secure-context ancestor chain**. The Host page must be HTTPS (or `localhost`) when the wallet iframe is HTTPS.
 - Dev wallet URL: your ngrok or local Vite origin root (e.g. `https://….ngrok-free.app/`).
-- Production wallet URL: **`https://wallet.1shotapi.com/`** (Signing Layer at `/signer/` on the same origin — do not embed `/signer/` from the host).
+- Production wallet URL: **`https://wallet.1shotapi.com/`** (Signing Layer at `/signer/` on the same origin — do not embed `/signer/` from the host). Branding and Signing are same-origin only; `/signer/` is served with `frame-ancestors 'self'`.
 - Safari / iOS WebKit cannot create passkeys inside a **cross-origin** wallet iframe. The branding layer detects this and opens **`https://wallet.1shotapi.com/create/`** in a new tab (same origin as the wallet). Allow pop-ups from the embedding page so that handoff can complete; no host code changes are required.
 
 ## Custom RPC — `configure`
@@ -94,7 +142,7 @@ await proxy.rpc("configure", options);
 | `features.hideCloseBox` | boolean | Hide chrome Close (X); default `false`. Use in Inline hosts (e.g. extension) |
 | `features.disableCredentials` | boolean | Hide Credentials tab; default `false`. Host credential flows still work |
 | `features.disableDelegations` | boolean | Hide Delegations tab; default `false`. Host delegation flows still work |
-| `features.allowedChains` | `string[]` (hex `0x…` chain ids) | Restrict Network dropdown to these catalog chains; omit or `[]` ⇒ all enabled |
+| `features.allowedChains` | `string[]` (EVM `0x…`, `Bitcoin` / `BitcoinTestnet`, `solana:mainnet` / `solana:devnet`) | Restrict Network dropdown to these catalog chains; omit or `[]` ⇒ all enabled |
 | `destinationUrl` | string \| null | URL to receive transaction status update webhooks from the [1Shot Relayer](https://1shotapi.com/docs/embedded-wallet/webhooks) (≤256 chars). `null` or `""` clears |
 | `copy.productName` | string | titles / chrome |
 | `copy.tagline` | string | supporting line |
@@ -215,32 +263,35 @@ See also the [embedded-wallet README](https://github.com/1Shot-API/embedded-wall
 
 ## Custom RPC — `switchChain`
 
-Switch the Branding Layer session chain. Accepts EVM hex ids **and** Bitcoin
-sentinels (`"Bitcoin"` mainnet, `"BitcoinTestnet"` testnet). Prefer this over
-EIP-1193 `wallet_switchEthereumChain` when the host catalog includes Bitcoin —
-EIP-1193 params are hex-only and reject non-hex ids with `Invalid params`.
+Switch the Branding Layer session chain. Accepts EVM hex ids, Bitcoin sentinels
+(`"Bitcoin"` / `"BitcoinTestnet"`), and Solana CAIP ids (`"solana:mainnet"` /
+`"solana:devnet"`). Prefer this over EIP-1193 `wallet_switchEthereumChain` when
+the host catalog includes Bitcoin or Solana — EIP-1193 params are hex-only and
+reject non-hex ids with `Invalid params`.
 
 ```ts
 await proxy.rpc("switchChain", { chainId: "Bitcoin" });
+await proxy.rpc("switchChain", { chainId: "solana:mainnet" });
 await proxy.rpc("switchChain", { chainId: "0x2105" });
 ```
 
 | Method | Params | Behavior |
 |--------|--------|----------|
-| `switchChain` | `{ chainId: \`0x…\` \| \`"Bitcoin"\` \| \`"BitcoinTestnet"\` }` | Bitcoin: session-only. EVM: same as `wallet_switchEthereumChain` via RpcHelper |
+| `switchChain` | `{ chainId: \`0x…\` \| \`"Bitcoin"\` \| \`"BitcoinTestnet"\` \| \`"solana:mainnet"\` \| \`"solana:devnet"\` }` | Bitcoin/Solana: session-only. EVM: same as `wallet_switchEthereumChain` via RpcHelper |
 
-Returns `{ ok: true, chainId }`. Bitcoin switches also emit EIP-1193
-`chainChanged` with the Bitcoin sentinel so hosts stay in sync.
+Returns `{ ok: true, chainId }`. Bitcoin and Solana switches also emit EIP-1193
+`chainChanged` with the matching sentinel so hosts stay in sync.
 
 ## Custom RPC — `getChainId`
 
-Read the Branding Layer **session** chain id (EVM hex or Bitcoin sentinel).
-Prefer this over EIP-1193 `eth_chainId` when the host catalog includes Bitcoin —
-`eth_chainId` only reflects the last EVM RpcHelper chain.
+Read the Branding Layer **session** chain id (EVM hex, Bitcoin sentinel, or
+Solana CAIP id). Prefer this over EIP-1193 `eth_chainId` when the host catalog
+includes Bitcoin or Solana — `eth_chainId` only reflects the last EVM RpcHelper
+chain.
 
 ```ts
 const { chainId } = await proxy.rpc("getChainId");
-// "0x2105" | "Bitcoin" | "BitcoinTestnet" | …
+// "0x2105" | "Bitcoin" | "BitcoinTestnet" | "solana:mainnet" | "solana:devnet" | …
 ```
 
 | Method | Params | Behavior |
@@ -335,25 +386,35 @@ Unlike `addAsset`, **`focusWallet` does not ask the user for confirmation** — 
 
 ## Custom RPC — `addAsset`
 
-Propose a tracked **ERC-20** for the Balances tab. The wallet resolves the token (known catalog, or on-chain `getCode` + `name`/`symbol`/`decimals`) **before** showing the confirm modal. Non-ERC-20 addresses are rejected. **Always requires user confirmation** (Reject / Add). On approval the asset is persisted; on rejection the RPC throws a user-rejected error.
+Propose a tracked asset for the Balances tab (or Solana shell). **Always requires user confirmation** (Reject / Add). On rejection the RPC throws a user-rejected error.
+
+**EVM:** Resolves the token (known catalog, or on-chain `getCode` + `name`/`symbol`/`decimals`) **before** the confirm modal. Non-ERC-20 addresses are rejected. On approval the asset is persisted (optional host `iconUrl`).
+
+**Solana:** Catalog mint only (mainnet/Devnet USDC today — not arbitrary mint paste). Confirm shows estimated ATA rent; on accept Branding runs `CreateIdempotent` (user pays rent + fees), then tracks with ATA fields. **USDC is not default-tracked** on Solana (rent). Primary UI never shows the ATA address — Receive uses the wallet pubkey.
 
 ```typescript
+// EVM
 await proxy.rpc("addAsset", {
   chainId: "0x13b2", // Arc
   assetAddress: "0x3600000000000000000000000000000000000000", // USDC
-  // Optional HTTPS icon (shown in confirm + Balances). `http:` / `data:` rejected.
-  iconUrl: "https://example.com/token-icon.png",
+  iconUrl: "https://example.com/token-icon.png", // optional https
+});
+
+// Solana (catalog USDC — creates ATA then tracks)
+await proxy.rpc("addAsset", {
+  chainId: "solana:mainnet",
+  assetAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
 });
 proxy.showWallet();
 ```
 
 | Method | Params | Effect |
 |--------|--------|--------|
-| `addAsset` | `{ chainId: \`0x…\`, assetAddress: \`0x…\`, iconUrl?: \`https://…\` }` | Probes ERC-20, shows confirm modal; on accept, adds to tracked assets (persists optional host icon) |
+| `addAsset` | `{ chainId: \`0x…\` \| \`solana:…\`, assetAddress: \`0x…\` \| base58 mint, iconUrl?: \`https://…\` }` | EVM: probe ERC-20 + confirm. Solana: catalog mint + ATA create + confirm. Persists optional host icon |
 
 Returns `{ ok: true, chainId, assetAddress }` when the user accepts.
 
-Users can also add assets from the Balances tab without a host RPC. The Balances list shows tracked assets for the currently selected network only (USDC is always tracked where listed; USDG on Robinhood).
+Users can also add assets from the Balances / Solana shell without a host RPC. EVM Balances show tracked assets for the selected network (pinned USDC/USDG defaults); Solana lists native SOL plus user-added SPL after ATA setup.
 
 ## Custom RPC — `createAccount`
 
@@ -410,28 +471,41 @@ Returns `{ upgraded: boolean, codeAddress?: EVMContractAddress, error?: string }
 
 ## Custom RPC — `bridge`
 
-Opens the gasless CCTP USDC bridge (native TokenMessengerV2 + Circle Forwarding Service, submitted through the 1Shot relayer). Locked wallet → error. Cancel before success → `OwsUserRejectedError`. Execute failure → thrown error. Flyout closes when the RPC settles (`requestDisplay` / `hide`). Omit `sourceChainId` to use the session chain.
+Opens the CCTP USDC bridge (Circle Forwarding Service). **EVM source** burns via TokenMessengerV2 + the 1Shot relayer (gasless USDC fee). **Solana source** burns via Kit/Alchemy (user pays SOL; no relayer fee UI). Locked wallet → error. Cancel before success → `OwsUserRejectedError`. Execute failure → thrown error. Flyout closes when the RPC settles (`requestDisplay` / `hide`). Omit `sourceChainId` to use the session chain.
 
 When `amount`, `destinationChainId`, and `speed` are all provided, the wallet skips the setup form, auto-quotes, and shows the confirmation screen only (secondary action is **Cancel**). Partial params open setup with those values as defaults.
 
+Same-network only: mainnet↔mainnet, testnet/Devnet↔testnet/Devnet.
+
 ```typescript
+// EVM → EVM or EVM → Solana
 await proxy.rpc("bridge", {
-  amount: "10.50",           // optional human USDC
-  sourceChainId: 8453,       // optional decimal; omit → session chain
-  destinationChainId: 1,     // optional; omit → user picks
-  speed: "fast",             // optional "fast" | "slow"; required with amount+dest to skip setup
-  tokenAddress: "0x…",       // optional; must be native CCTP USDC on source (default)
+  amount: "10.50",                      // optional human USDC
+  sourceChainId: 8453,                  // optional decimal; omit → session chain
+  destinationChainId: "solana:mainnet", // optional decimal EVM or Solana CAIP-2
+  speed: "fast",                        // optional "fast" | "slow"; required with amount+dest to skip setup
+  tokenAddress: "0x…",                  // optional; EVM native CCTP USDC on source
+  solanaRecipient: "…base58…",          // optional; Solana wallet when dest is Solana (defaults to session)
+});
+
+// Solana → EVM (requires tracked USDC ATA)
+await proxy.rpc("bridge", {
+  amount: "10.50",
+  sourceChainId: "solana:mainnet",
+  destinationChainId: 8453,
+  speed: "fast",
+  evmRecipient: "0x…",                  // optional; defaults to session EVM address
 });
 // or: await proxy.rpc("bridge", {});
 ```
 
 | Method | Params | Behavior |
 |--------|--------|----------|
-| `bridge` | `{ amount?: string, sourceChainId?: number, destinationChainId?: number, speed?: "fast" \| "slow", tokenAddress?: string }` | Shows wallet, opens CCTP bridge for native USDC on a relayer CCTP source. Dest must be a same-network CCTP chain. Full params → confirm-only. |
+| `bridge` | `{ amount?: string, sourceChainId?: number \| string, destinationChainId?: number \| string, speed?: "fast" \| "slow", tokenAddress?: string, solanaRecipient?: string, evmRecipient?: string }` | Shows wallet, opens CCTP bridge. EVM source → relayer burn; Solana source → Alchemy burn. Dest must be a same-network CCTP chain. Full params → confirm-only. |
 
-Returns `{ ok: true, burnTxHash, forwardTxHash? }` when the bridge succeeds (destination mint if Iris has completed). The user pays the relayer USDC fee (same path as Send); destination mint is Circle’s Forwarding Service — no dest-chain signature and no native gas.
+Returns `{ ok: true, burnTxHash, forwardTxHash? }` when the bridge succeeds (destination mint if Iris has completed). EVM source: user pays the relayer USDC fee (same path as Send). Solana source: user pays SOL for the burn tx. Destination mint is Circle’s Forwarding Service — no dest-chain signature.
 
-Product analytics: `BridgeOpened`, `BridgeCompleted`, `BridgeFailed`, `BridgeCancelled` (burn submit still also emits `TransactionSubmitted*`).
+Product analytics (EVM source): `BridgeOpened`, `BridgeCompleted`, `BridgeFailed`, `BridgeCancelled` (burn submit still also emits `TransactionSubmitted*`).
 
 ## Custom RPC — `requestCancelDelegations`
 
@@ -472,7 +546,7 @@ Subscribe so in-wallet chain/account changes update host UI without polling:
 
 ```typescript
 proxy.ethereum.on("chainChanged", (chainId) => {
-  // EVM hex (`0x…`) or Bitcoin sentinel (`Bitcoin` / `BitcoinTestnet`)
+  // EVM hex (`0x…`), Bitcoin (`Bitcoin` / `BitcoinTestnet`), or Solana CAIP
 });
 proxy.ethereum.on("accountsChanged", (accounts) => {
   // EVM address array
@@ -598,7 +672,7 @@ Any other `type` is rejected. Kit config shape is validated at `addCaveat` time;
 
 #### `chainlink-price-rule` data
 
-Wallet hard-verifies `priceFeed` against a trusted list (ETH/BTC/PAXG USD on Ethereum mainnet; ETH/USD on Base). Malicious feeds never reach signing. `expectedDecimals` must match the feed (8 for these USD pairs).
+Wallet hard-verifies `priceFeed` against a curated trusted list (ETH/BTC/PAXG on Ethereum + Arc; ETH/BTC on Base). Malicious feeds never reach signing. `expectedDecimals` must match the feed (8 for these USD pairs). For Arc hop-1 redemptions, pin Arc feed proxies — Ethereum mainnet feed addresses have no code on Arc and cause empty `estimateGas` reverts. Official per-network proxy lists: Chainlink RDD JSONs linked from `smartcontractkit/documentation` `chains.ts` (`rddUrl`), e.g. `feeds-arc-mainnet.json` / `feeds-mainnet.json` / `feeds-ethereum-mainnet-base-1.json`.
 
 | Field | Relative (Dip=0 / Rise=1) | Absolute (Gte=2 / Lte=3) |
 |-------|---------------------------|--------------------------|
@@ -649,7 +723,7 @@ const responses = await proxy.ethereum.request({
         {
           type: "chainlink-price-rule",
           data: {
-            priceFeed: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419", // ETH/USD
+            priceFeed: "0x50FCDD99D6762D1C170DC6A9111db944AEE6D364", // ETH/USD (Arc)
             ruleKind: 0,           // Dip
             expectedDecimals: 8,
             windowSeconds: 86400,
@@ -676,6 +750,6 @@ Signed swap DF `Caveat[]` includes AllowedTargets, ValueLte, LiFiSwapEnforcer, a
 - Use `focusWallet` / `unfocusWallet` for host-driven single-asset flows; do not expose mode switching in the wallet UI.
 - Use `addAsset` when the host wants a lasting Balances entry; expect a confirm modal (contrast with `focusWallet`).
 - Use `onramp` (or the in-wallet Buy button) for fiat → crypto; do not put the Circle kit key in the Host or Branding Layer.
-- Use `bridge` (or the in-wallet Bridge button) for gasless CCTP USDC; do not require native gas or dest-chain `receiveMessage`.
+- Use `bridge` (or the in-wallet Bridge button) for CCTP USDC (EVM↔Solana); EVM source is gasless via the relayer, Solana source pays SOL for the burn — never require dest-chain `receiveMessage`.
 - Stack extra enforcers via sibling `rules[]` on `wallet_requestExecutionPermissions` — never nest them in `permission.data`, and never invent unlisted rule `type`s. (DF “caveats” exist only after the wallet maps `rules` at sign time.)
 - Keep approve / fee / swap as separate `params` entries (separate Delegations), not one authority chain.
