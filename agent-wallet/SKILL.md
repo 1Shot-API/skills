@@ -6,7 +6,10 @@ description: >-
   EIP-7710 delegations (including redelegation and EIP-7702 auth) without
   printing private keys, mnemonics, or passwords into chat context. Use when an
   agent needs its own wallet, agent private key storage, non-interactive casting,
-  or MetaMask Smart Accounts Kit delegations from a headless environment.
+  or MetaMask Smart Accounts Kit delegations from a headless environment. Also
+  use when an agent needs an address for a CoinOperated (or other product)
+  funding/registration deeplink after create — product URL shape lives in the
+  consuming skill (e.g. coinoperated).
 license: MIT
 metadata:
   author: 1Shot-API
@@ -86,6 +89,10 @@ node scripts/aw.mjs delegation-sign --file ./delegation-input.json
 
 Delegation input schema, scopes, and redelegation: [references/eip7710.md](./references/eip7710.md).
 
+## After create — product deeplinks
+
+This skill only supplies the **address**. For CoinOperated owner linking (additional signer + spending delegation), follow skill **coinoperated**: build `https://coinoperated.finance/agent/link?accountAddress=…&name=…`, ask the user to open it, then SIWE with `sign-personal` for a Bearer token.
+
 ## Agent rules
 
 1. Run `doctor` before first use; fix cast / `npm install` from its hints.
@@ -104,4 +111,5 @@ See [references/storage.md](./references/storage.md). Tier B only in v1: encrypt
 - [references/security.md](./references/security.md) — threat model
 - [references/eip7710.md](./references/eip7710.md) — delegation JSON + 7702
 - Skill **public-relayer** — submit signed EIP-7710 contexts (`relayer_send7710Transaction`)
+- Skill **coinoperated** — CoinOperated agent link deeplink + SIWE Bearer + OpenAPI
 - Skill **smart-accounts-kit** (MetaMask) — broader kit workflows

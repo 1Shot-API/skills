@@ -43,6 +43,7 @@ npx skills add 1Shot-API/skills -l
 | [ows-branding-layer](./ows-branding-layer/) | `npx skills add 1Shot-API/skills/ows-branding-layer -g -a cursor -y` |
 | [webauthn-prf-wallet](./webauthn-prf-wallet/) | `npx skills add 1Shot-API/skills/webauthn-prf-wallet -g -a cursor -y` |
 | [agent-wallet](./agent-wallet/) | `npx skills add 1Shot-API/skills/agent-wallet -g -a cursor -y` |
+| [coinoperated](./coinoperated/) | `npx skills add 1Shot-API/skills/coinoperated -g -a cursor -y` |
 | [unit-tests](./unit-tests/) | `npx skills add 1Shot-API/skills/unit-tests -g -a cursor -y` |
 
 ### `1shot-api`
@@ -67,7 +68,11 @@ Build a passkey-derived EVM wallet using the WebAuthn PRF extension in an isolat
 
 ### `agent-wallet`
 
-Local agent EOA via Foundry encrypted keystores and a non-interactive `scripts/aw.mjs` CLI — create/sign/send without printing keys, plus EIP-7710 delegation helpers (`@metamask/smart-accounts-kit`). Pair with **public-relayer** to submit signed contexts.
+Local agent EOA via Foundry encrypted keystores and a non-interactive `scripts/aw.mjs` CLI — create/sign/send without printing keys, plus EIP-7710 delegation helpers (`@metamask/smart-accounts-kit`). Pair with **public-relayer** to submit signed contexts. For CoinOperated linking, see **coinoperated**.
+
+### `coinoperated`
+
+High-level coordinator for [CoinOperated](https://coinoperated.finance): create an agent wallet via **agent-wallet**, emit an `/agent/link` deeplink for the owner to confirm an additional signer and spending delegation, then SIWE for a Bearer JWT and call the REST API using OpenAPI.
 
 ### `unit-tests`
 
