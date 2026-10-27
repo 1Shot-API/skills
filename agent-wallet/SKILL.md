@@ -9,11 +9,14 @@ description: >-
   or MetaMask Smart Accounts Kit delegations from a headless environment. Also
   use when an agent needs an address for a CoinOperated (or other product)
   funding/registration deeplink after create — product URL shape lives in the
-  consuming skill (e.g. coinoperated).
+  consuming skill (e.g. coinoperated). Also use when signing EIP-7702 auth or
+  EIP-7710 root/redelegations that will be submitted via the public-relayer
+  skill (relayer_estimate7710Transaction / relayer_send7710Transaction,
+  including batched executions and multichain).
 license: MIT
 metadata:
   author: 1Shot-API
-  version: "0.1.0"
+  version: "0.2.0"
   repository: https://github.com/1Shot-API/skills
 ---
 
@@ -93,12 +96,33 @@ Delegation input schema, scopes, and redelegation: [references/eip7710.md](./ref
 
 This skill only supplies the **address**. For CoinOperated owner linking (additional signer + spending delegation), follow skill **coinoperated**: build `https://coinoperated.finance/agent/link?accountAddress=…&name=…`, ask the user to open it, then SIWE with `sign-personal` for a Bearer token.
 
+## Redeeming via the public relayer
+
+`aw` **signs** (7702 auth, root delegation, redelegation). It does **not** call `relayer_*`. Follow skill **public-relayer** (Path **D**, [Example 0d](https://github.com/1Shot-API/skills/blob/main/public-relayer/references/examples.md)) for capabilities → estimate → send.
+
+| Goal | `aw` commands | Then (public-relayer) |
+|------|---------------|------------------------|
+| First-time smart account on a chain | `auth7702 --rpc … --chain-id N` | Pass `authorizationList` on estimate/send |
+| Agent pays fee + work itself | `delegation-sign --file …` with `to: targetAddress` | `permissionContext: [signedDelegation]` |
+| Spend a **user grant** to this agent (CoinOperated) | `redelegate --parent parent.json --file child.json` (`to: targetAddress`, narrower scope) | `permissionContext: [parent, child]` |
+
+**Batching (same chain):** one `permissionContext` + multiple `executions[]` (e.g. fee `transfer` + work). Do not run separate `aw send` calls for gas-abstracted redeem.
+
+**Multichain:** run `auth7702` / `redelegate` (or `delegation-sign`) **per chain** as needed, then `relayer_estimate7710TransactionMultichain` / `relayer_send7710TransactionMultichain` with per-chain `context` from `contextByChainId`.
+
+```bash
+# Example — redelegate user parent → relayer target (D2)
+node scripts/aw.mjs auth7702 --rpc https://… --chain-id 5042
+node scripts/aw.mjs redelegate --parent ./parent.json --file ./child-input.json
+# → use signedDelegation with public-relayer estimate/send (see Example 0d)
+```
+
 ## Agent rules
 
 1. Run `doctor` before first use; fix cast / `npm install` from its hints.
 2. After `create`, tell the user the **address** only — never open or dump the password file or keystore JSON into chat.
 3. Do not run `cast wallet private-key`, `cast wallet new` without `--unsafe-password`, or interactive password prompts.
-4. For EIP-7710 submit/redeem, use a relayer or bundler separately (see **See also**).
+4. For EIP-7710 **submit/redeem**, use skill **public-relayer** (`relayer_*`) — not `aw send`.
 5. Treat stdout as the only success channel; parse JSON (`ok: true`).
 
 ## Storage layout

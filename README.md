@@ -56,7 +56,7 @@ Guides a coding agent in embedding the **1Shot Wallet** from a Host Layer app us
 
 ### `public-relayer`
 
-Integrate a client app with the 1Shot public relayer JSON-RPC API for gas-abstracted EIP-7710 delegated transactions. Use when the host or backend calls `relayer_*` methods directly (not for embed-only wallet sends — use `1shot-wallet` for that).
+Integrate a client app with the 1Shot public relayer JSON-RPC API for gas-abstracted EIP-7710 delegated transactions. Use when the host or backend calls `relayer_*` methods directly (not for embed-only wallet sends — use `1shot-wallet` for that). Pair with **agent-wallet** for Path D (local EOA `aw redelegate` / `auth7702` + estimate/send).
 
 ### `ows-branding-layer`
 
@@ -72,7 +72,7 @@ Local agent EOA via Foundry encrypted keystores and a non-interactive `scripts/a
 
 ### `coinoperated`
 
-High-level coordinator for [CoinOperated](https://coinoperated.finance): create an agent wallet via **agent-wallet**, emit an `/agent/link` deeplink for the owner to confirm an additional signer and spending delegation, then SIWE for a Bearer JWT and call the REST API using OpenAPI.
+High-level coordinator for [CoinOperated](https://coinoperated.finance): create an agent wallet via **agent-wallet**, emit an `/agent/link` deeplink for the owner to confirm an additional signer and spending delegation, SIWE for a Bearer JWT / OpenAPI, then spend with **public-relayer** Path D2 (`aw redelegate` + `relayer_send7710Transaction`).
 
 ### `unit-tests`
 

@@ -96,7 +96,7 @@ export function computeFeeAmount(
 
 ## Example 0 — Browser extension flow (MetaMask + viem + EIP-7715 permissions)
 
-For embedded 1Shot Wallet flows see **Example 0b** (Path B1, direct grant to relayer) and **Example 0c** (Path B2, session key + redelegation — recommended).
+For embedded 1Shot Wallet flows see **Example 0b** (Path B1, direct grant to relayer) and **Example 0c** (Path B2, session key + redelegation — recommended). For **agent-wallet** (`aw.mjs`) local EOAs see **Example 0d** (Path D).
 
 Use this shape for browser apps where the user signs with a wallet extension. Prefer extension permission requests over local `signDelegation` flows in this context.
 
@@ -544,6 +544,174 @@ Notes:
 - The embedded-wallet host playground grants to a placeholder delegatee for UX only — production B2 must redelegate before `relayer_send7710Transaction`.
 - Session account upgrade: if the session EOA is not yet a smart account on chain, sign EIP-7702 **`authorizationList`** and attach on send (see Step 2 elsewhere in this skill).
 - Alternative API: **`redelegatePermissionContext`** on a session smart account extended with `erc7710WalletActions` — see [MetaMask create redelegation](https://docs.metamask.io/smart-accounts-kit/guides/advanced-permissions/create-redelegation/).
+
+---
+
+## Example 0d — Agent wallet (`aw.mjs`) + public relayer (Path D)
+
+Path **D** from `SKILL.md`: the agent EOA lives in **agent-wallet** Foundry keystores. Use `aw` for all signing; use this skill’s JSON-RPC for estimate/send. Never print keystore passwords or private keys.
+
+Shared setup (from skill root of **agent-wallet**):
+
+```bash
+node scripts/aw.mjs doctor
+node scripts/aw.mjs address   # show user address only
+```
+
+### D1 — Self-sponsored (agent creates root delegation to `targetAddress`)
+
+1. `relayer_getCapabilities` → `targetAddress`, `feeCollector`, USDC (or other accepted token).
+2. Optional first upgrade: `node scripts/aw.mjs auth7702 --rpc "$RPC" --chain-id "$CHAIN_ID"` → keep `authorization` for send.
+3. Write `delegation.json`:
+
+```json
+{
+  "chainId": 8453,
+  "to": "0xRelayerTargetFromCapabilities…",
+  "scope": {
+    "type": "erc20TransferAmount",
+    "tokenAddress": "0xUSDC…",
+    "maxAmount": "1100000"
+  },
+  "salt": "0x…fresh32bytes…"
+}
+```
+
+4. Sign: `node scripts/aw.mjs delegation-sign --file ./delegation.json` → `signedDelegation`.
+5. Build fee + work `executions`, `permissionContext: [toRelayerJson(signedDelegation)]`, then estimate → send (same as Example 1b). Attach `authorizationList` from step 2 when needed.
+
+### D2 — Parent grant (e.g. CoinOperated) + `aw redelegate` (recommended for agents)
+
+Owner already granted a periodic ERC-20 permission **to the agent address** (CoinOperated deeplink / `wallet_requestExecutionPermissions` with `to: agent`). Agent redeems by **narrowing** to the relayer.
+
+```bash
+# parent.json = signed MetaMask Delegation object (from decodeDelegations(permissionContext)[0]
+# or CoinOperated stored `delegation` JSON). Must include a real signature.
+
+# child-input.json — to MUST be capabilities.targetAddress; maxAmount = fee+work for THIS submit
+cat > child-input.json <<'EOF'
+{
+  "chainId": 5042,
+  "to": "0xRelayerTargetAddress…",
+  "scope": {
+    "type": "erc20TransferAmount",
+    "tokenAddress": "0xArcUSDC…",
+    "maxAmount": "1100000"
+  },
+  "salt": "0x…fresh32bytes…"
+}
+EOF
+
+node scripts/aw.mjs redelegate --parent ./parent.json --file ./child-input.json
+# → { ok: true, signedDelegation, chainId }
+```
+
+Then in TypeScript (signing already done — only assemble + RPC):
+
+```ts
+import { encodeDelegations, decodeDelegations } from "@metamask/smart-accounts-kit/utils";
+import { encodeFunctionData, erc20Abi } from "viem";
+// rpc, toRelayerJson, Estimate7710Result — see Shared utilities above
+
+const decimalChainId = "5042"; // Arc mainnet example — confirm via getCapabilities
+const relayerUrl = "https://relayer.1shotapi.com/relayers";
+const rpcAt = <T>(method: string, params: unknown, id = 1) =>
+  rpc<T>(method, params, id, relayerUrl);
+
+const caps = await rpcAt<Record<string, {
+  feeCollector: `0x${string}`;
+  targetAddress: `0x${string}`;
+  tokens: { address: `0x${string}`; symbol?: string; decimals: number | string }[];
+}>>("relayer_getCapabilities", [decimalChainId]);
+const { feeCollector, targetAddress, tokens } = caps[decimalChainId]!;
+const usdc = tokens.find((t) => t.symbol === "USDC")!;
+
+// parent + child from disk / CoinOperated API (already signed)
+const parent = parentDelegationFromApi; // signed Delegation
+const child = signedRedelegationFromAw; // stdout of `aw redelegate`
+
+if (child.delegate.toLowerCase() !== targetAddress.toLowerCase()) {
+  throw new Error("Redelegation must target relayer targetAddress");
+}
+
+const permissionContext = decodeDelegations(
+  encodeDelegations([parent, child]),
+).map((d) => toRelayerJson(d));
+
+const feeAmount = 100_000n; // mock ≥ minFee; adjust after estimate
+const workAmount = 1_000_000n;
+const feeTransfer = {
+  target: usdc.address,
+  value: "0",
+  data: encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [feeCollector, feeAmount],
+  }),
+};
+const workTransfer = {
+  target: usdc.address,
+  value: "0",
+  data: encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: ["0xDestination…", workAmount],
+  }),
+};
+
+const sendParams = {
+  chainId: decimalChainId,
+  transactions: [
+    {
+      permissionContext,
+      executions: [feeTransfer, workTransfer], // batch: fee + work, one permissionContext
+    },
+  ],
+  // authorizationList: [authFromAw] when agent EOA needs EIP-7702 upgrade on this chain
+};
+
+const estimate = await rpcAt<Estimate7710Result>(
+  "relayer_estimate7710Transaction",
+  sendParams,
+);
+if (!estimate.success) throw new Error(estimate.error ?? "estimate failed");
+// if requiredPaymentAmount changed: bump child maxAmount + fee execution, re-run aw redelegate, re-estimate
+
+const taskId = await rpcAt<string>("relayer_send7710Transaction", {
+  ...sendParams,
+  context: estimate.context,
+  delegationSecret: process.env.APP_DELEGATION_SECRET, // one secret per app; reuse
+  memo: "agent-spend-1",
+});
+console.log("submitted", taskId);
+```
+
+**Batching:** put every call for **one chain / one privilege chain** in `executions[]` under a single `transactions[]` entry (as above). For sponsor+worker patterns, use two `transactions[]` entries each with its own `permissionContext` (see Example 3).
+
+**Multichain:** repeat D2 per chain (capabilities + optional `auth7702` + `redelegate` per `chainId`), then:
+
+```ts
+const params = [arcParam, baseParam]; // each: { chainId, transactions, authorizationList? }
+const estimate = await rpcAt<Estimate7710Result>(
+  "relayer_estimate7710TransactionMultichain",
+  params,
+);
+if (!estimate.success) throw new Error(estimate.error ?? "estimate failed");
+const taskIds = await rpcAt<string[]>("relayer_send7710TransactionMultichain",
+  params.map((p) => ({
+    ...p,
+    context: estimate.contextByChainId![p.chainId],
+    delegationSecret: process.env.APP_DELEGATION_SECRET,
+  })),
+);
+```
+
+Notes:
+
+- Redelegation may only **narrow** the parent (MetaMask caveat stacking).
+- Prefer estimate-first; quote `context` TTL is ~30s.
+- `aw send` is unrelated — do not use it for relayer redeem.
+- Full CLI flags: **agent-wallet** `references/eip7710.md`.
 
 ---
 
