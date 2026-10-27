@@ -42,6 +42,7 @@ npx skills add 1Shot-API/skills -l
 | [public-relayer](./public-relayer/) | `npx skills add 1Shot-API/skills/public-relayer -g -a cursor -y` |
 | [ows-branding-layer](./ows-branding-layer/) | `npx skills add 1Shot-API/skills/ows-branding-layer -g -a cursor -y` |
 | [webauthn-prf-wallet](./webauthn-prf-wallet/) | `npx skills add 1Shot-API/skills/webauthn-prf-wallet -g -a cursor -y` |
+| [agent-wallet](./agent-wallet/) | `npx skills add 1Shot-API/skills/agent-wallet -g -a cursor -y` |
 | [unit-tests](./unit-tests/) | `npx skills add 1Shot-API/skills/unit-tests -g -a cursor -y` |
 
 ### `1shot-api`
@@ -63,6 +64,10 @@ Scaffold or extend an Open Wallet Standard (OWS) Branding Layer with `@1shotapi/
 ### `webauthn-prf-wallet`
 
 Build a passkey-derived EVM wallet using the WebAuthn PRF extension in an isolated iframe (companion to `public-relayer` for non-custodial, no-API-key apps).
+
+### `agent-wallet`
+
+Local agent EOA via Foundry encrypted keystores and a non-interactive `scripts/aw.mjs` CLI — create/sign/send without printing keys, plus EIP-7710 delegation helpers (`@metamask/smart-accounts-kit`). Pair with **public-relayer** to submit signed contexts.
 
 ### `unit-tests`
 
