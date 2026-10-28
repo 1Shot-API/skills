@@ -78,6 +78,29 @@ High-level coordinator for [CoinOperated](https://coinoperated.finance): create 
 
 Authors Jest unit tests for TypeScript services in the oneshot monorepo using testdouble, neverthrow `ResultAsync`, and a structured mocks class (Arrange/Act/Assert, negative-only `td.verify`).
 
+## Discovery (agentskills.io)
+
+This repo is public and tagged for agent-skill indexers (`agent-skills`, `skill-md`, `claude-skills`, …). Installers that speak GitHub sources can list everything with:
+
+```bash
+npx skills add 1Shot-API/skills -l
+```
+
+**CoinOperated** also publishes a [well-known discovery index](https://agentskills.io/home) so agents can find the product skill from the site origin:
+
+```bash
+npx skills add https://coinoperated.finance --skill coinoperated -g -a cursor -y
+# index: https://coinoperated.finance/.well-known/agent-skills/index.json
+```
+
+After editing `coinoperated/SKILL.md`, sync the hosted discovery copy from the CoinOperated repo:
+
+```bash
+# in CoinOperated
+yarn skills:sync-discovery   # reads ../skills/coinoperated/SKILL.md by default
+```
+
+
 ## Maintaining skills
 
 When product APIs change (Host RPC, relayer JSON-RPC, OWS packages, M2M/SDK surfaces, oneshot test conventions), update the matching skill in **this** repository in the same effort. Product-repo `AGENTS.md` files point maintainers here.
