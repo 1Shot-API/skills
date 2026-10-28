@@ -42,6 +42,8 @@ npx skills add 1Shot-API/skills -l
 | [public-relayer](./public-relayer/) | `npx skills add 1Shot-API/skills/public-relayer -g -a cursor -y` |
 | [ows-branding-layer](./ows-branding-layer/) | `npx skills add 1Shot-API/skills/ows-branding-layer -g -a cursor -y` |
 | [webauthn-prf-wallet](./webauthn-prf-wallet/) | `npx skills add 1Shot-API/skills/webauthn-prf-wallet -g -a cursor -y` |
+| [agent-wallet](./agent-wallet/) | `npx skills add 1Shot-API/skills/agent-wallet -g -a cursor -y` |
+| [coinoperated](./coinoperated/) | `npx skills add 1Shot-API/skills/coinoperated -g -a cursor -y` |
 | [unit-tests](./unit-tests/) | `npx skills add 1Shot-API/skills/unit-tests -g -a cursor -y` |
 
 ### `1shot-api`
@@ -54,7 +56,7 @@ Guides a coding agent in embedding the **1Shot Wallet** from a Host Layer app us
 
 ### `public-relayer`
 
-Integrate a client app with the 1Shot public relayer JSON-RPC API for gas-abstracted EIP-7710 delegated transactions. Use when the host or backend calls `relayer_*` methods directly (not for embed-only wallet sends — use `1shot-wallet` for that).
+Integrate a client app with the 1Shot public relayer JSON-RPC API for gas-abstracted EIP-7710 delegated transactions. Use when the host or backend calls `relayer_*` methods directly (not for embed-only wallet sends — use `1shot-wallet` for that). Pair with **agent-wallet** for Path D (local EOA `aw redelegate` / `auth7702` + estimate/send).
 
 ### `ows-branding-layer`
 
@@ -63,6 +65,14 @@ Scaffold or extend an Open Wallet Standard (OWS) Branding Layer with `@1shotapi/
 ### `webauthn-prf-wallet`
 
 Build a passkey-derived EVM wallet using the WebAuthn PRF extension in an isolated iframe (companion to `public-relayer` for non-custodial, no-API-key apps).
+
+### `agent-wallet`
+
+Local agent EOA via Foundry encrypted keystores and a non-interactive `scripts/aw.mjs` CLI — create/sign/send without printing keys, plus EIP-7710 delegation helpers (`@metamask/smart-accounts-kit`). Pair with **public-relayer** to submit signed contexts. For CoinOperated linking, see **coinoperated**.
+
+### `coinoperated`
+
+High-level coordinator for [CoinOperated](https://coinoperated.finance): create an agent wallet via **agent-wallet**, emit an `/agent/link` deeplink for the owner to confirm an additional signer and spending delegation, SIWE for a Bearer JWT / OpenAPI, then spend with **public-relayer** Path D2 (`aw redelegate` + `relayer_send7710Transaction`).
 
 ### `unit-tests`
 

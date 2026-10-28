@@ -1,0 +1,14 @@
+{
+  "name": "@1shotapi/agent-wallet-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Non-interactive CLIs for the agent-wallet skill (Foundry keystores + EIP-7710)",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@metamask/smart-accounts-kit": "^0.4.0-beta.1",
+    "ethers": "^6.15.0",
+    "viem": "^2.40.3"
+  }
+}

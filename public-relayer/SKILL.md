@@ -5,17 +5,20 @@ description: >-
   gas-abstracted EIP-7710 delegated transactions on EVM chains. Use when the
   host or backend calls relayer_* methods directly, redeems a delegation context
   from wallet_requestExecutionPermissions (embedded 1Shot Wallet or MetaMask),
-  verifies relayer webhooks, or builds MetaMask/local-signer delegation flows.
-  Do NOT use for embedding wallet.1shotapi.com alone (OWSProxy, configure,
-  eth_requestAccounts, eth_sendTransaction) — the wallet calls the relayer
-  internally; use the 1shot-wallet skill instead. Trigger on relayer_send7710Transaction,
+  verifies relayer webhooks, builds MetaMask/local-signer delegation flows, or
+  redeems user grants with an agent-wallet EOA (redelegate + estimate/send,
+  including batch executions and multichain). Do NOT use for embedding
+  wallet.1shotapi.com alone (OWSProxy, configure, eth_requestAccounts,
+  eth_sendTransaction) — the wallet calls the relayer internally; use the
+  1shot-wallet skill instead. Trigger on relayer_send7710Transaction,
   relayer_estimate7710Transaction, relayer_getCapabilities, relayer_getFeeData,
   relayer_getStatus, EIP-7710/7715 delegations, requestExecutionPermissions,
-  decodeDelegations, or gas-abstracted txs via a third-party relay.
+  decodeDelegations, agent-wallet redelegate/auth7702, or gas-abstracted txs
+  via a third-party relay.
 license: MIT
 metadata:
   author: 1Shot-API
-  version: "1.0.0"
+  version: "1.1.0"
   repository: https://github.com/1Shot-API/skills
 ---
 
@@ -362,6 +365,29 @@ The public relayer is an open JSON-RPC service (no API key). Anyone can run an a
 
 MetaMask extension (`requestExecutionPermissions` + `window.ethereum`) or local/backend signers (`createDelegation` + `signDelegation`). The rest of this skill applies as written. See Example 0 in [references/examples.md](references/examples.md).
 
+### Path D — Agent wallet (local EOA via **agent-wallet**)
+
+Use when a **coding agent** holds an EOA in Foundry keystores (`aw.mjs`) and must redeem through the public relayer **without** printing private keys. Install **`agent-wallet`** + this skill. Signing stays in `aw`; JSON-RPC stays here.
+
+| Sub-path | Parent grant | Agent signs | Example |
+|----------|--------------|-------------|---------|
+| **D1 — Self-sponsored** | None — agent creates a root delegation `to: targetAddress` | `aw delegation-sign` (+ `auth7702` on first use) | [Example 0d](references/examples.md) (D1) |
+| **D2 — User grant + redelegate** (CoinOperated / session-key style) | Owner granted periodic ERC-20 to the **agent address** | `aw redelegate --parent …` to `targetAddress`, then estimate/send with **chain** `[parent, child]` | [Example 0d](references/examples.md) (D2) |
+
+**Order for D2 (most common after CoinOperated linking):**
+
+1. Load the signed parent (e.g. CoinOperated `GET /api/agent/delegations` → `permissionContext` / stored delegation JSON). Never ask the user for the agent private key.
+2. `relayer_getCapabilities` → `targetAddress`, `feeCollector`, payment token for the work chain (and fee chain if multichain).
+3. First use on a chain: `node scripts/aw.mjs auth7702 --rpc … --chain-id N` and attach `authorizationList` on estimate/send.
+4. Write a child input JSON with `to: targetAddress`, scope **narrower** than the parent (`erc20TransferAmount` ≥ fee + work for this submit), fresh `salt`.
+5. `node scripts/aw.mjs redelegate --parent parent.json --file child.json` → `signedDelegation` (child).
+6. Build `permissionContext` as `[toRelayerJson(parent), toRelayerJson(child)]` (or `decodeDelegations(encodeDelegations([parent, child]))` then `toRelayerJson`).
+7. Bundle `executions[]` (fee `transfer` to `feeCollector` + work). Prefer **`relayer_estimate7710Transaction`** then send with `context` (30s lock). Reuse one app-level **`delegationSecret`**.
+8. **Batching:** multiple `executions` in one `transactions[]` entry share one `permissionContext` (same chain). Multiple `transactions[]` entries = multiple permission contexts in one redeem (e.g. sponsor + worker).
+9. **Multichain:** build one param per chain (each with its own redelegation/`authorizationList` as needed); use `relayer_estimate7710TransactionMultichain` / `relayer_send7710TransactionMultichain` and set each `params[i].context = contextByChainId[chainId]`.
+
+Do **not** use `aw send` for gas-abstracted redeem — that broadcasts a raw EOA tx. Relayer redeem is always `relayer_*` JSON-RPC after `aw` signing.
+
 ## Composing with `webauthn-prf-wallet` for a fully non-custodial app
 
 The public relayer pairs naturally with the **`webauthn-prf-wallet`** skill (separately installed) to build a **fully non-custodial web3 application with no vendor lock-in and no business account required**:
@@ -375,7 +401,9 @@ End-to-end, the user owns their key (passkey), pays only the per-tx fee (ERC-20)
 ## Additional resources
 
 - [references/schemas.md](references/schemas.md) — full JSON-RPC method signatures, schemas, status/error codes, JWKS body shape. Read this when you need exact parameter shapes, the complete error catalog, or the on-the-wire webhook payload format.
-- [references/examples.md](references/examples.md) — runnable TypeScript patterns: MetaMask browser flow (Example 0), embedded wallet direct grant (Example 0b, Path B1), embedded wallet session key + redelegation (Example 0c, Path B2), estimate-first single-chain and multichain flows, self-sponsored, sponsored, webhook receiver with Ed25519 verification. Read this when you're about to write client code or want to copy a known-good integration shape.
+- [references/examples.md](references/examples.md) — runnable TypeScript patterns: MetaMask browser flow (Example 0), embedded wallet direct grant (Example 0b, Path B1), embedded wallet session key + redelegation (Example 0c, Path B2), **agent-wallet CLI + redelegate (Example 0d, Path D)**, estimate-first single-chain and multichain flows, self-sponsored, sponsored, webhook receiver with Ed25519 verification. Read this when you're about to write client code or want to copy a known-good integration shape.
 - `1shot-wallet` skill — embed the 1Shot Wallet (OWS Host Layer). Required for Path A and Path B; companion for **Path B** delegation execution only (not required for embed-only sends).
+- `agent-wallet` skill — local agent EOA (`aw.mjs`: `auth7702`, `delegation-sign`, `redelegate`). Required for **Path D**; pair with this skill for relayer JSON-RPC.
+- `coinoperated` skill — owner deeplink grant + agent SIWE; then Path **D2** here to spend.
 - `webauthn-prf-wallet` skill — companion skill for client-side passkey-derived EVM keys held in an isolated iframe. Use together with this skill for a fully non-custodial setup.
 - MetaMask Smart Accounts Kit — [install](https://docs.metamask.io/smart-accounts-kit/get-started/install/), [browser / EIP-7715 flow](https://docs.metamask.io/smart-accounts-kit/guides/advanced-permissions/execute-on-metamask-users-behalf/), [local signer / delegation flow](https://docs.metamask.io/smart-accounts-kit/guides/delegation/execute-on-smart-accounts-behalf/), [Advanced Permissions wallet-client reference](https://docs.metamask.io/smart-accounts-kit/reference/advanced-permissions/wallet-client/).
