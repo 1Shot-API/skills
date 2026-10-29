@@ -66,7 +66,7 @@ After the user confirms they finished the link flow:
 1. `GET https://coinoperated.finance/api/auth/siwe/nonce` → `{ nonce, chainId, domain }`.
 2. Build a SIWE message for the **agent** address using those fields (`statement`: `Sign in to CoinOperated`, `uri`: `https://coinoperated.finance`, `version`: `1`). Details: [references/siwe-agent.md](./references/siwe-agent.md).
 3. Sign with **agent-wallet** `sign-personal --message …` (the prepared SIWE string). Never dump private keys.
-4. `POST https://coinoperated.finance/api/auth/siwe/verify/token` with `{ "message", "signature" }` → `{ accessToken, tokenType, expiresIn, user }`. Fails if the address is not yet a primary or registered additional signer.
+4. `POST https://coinoperated.finance/api/auth/siwe/verify/token` with `{ "message", "signature" }` → `{ accessToken, tokenType, expiresIn, user, signerNonce }`. Persist **`signerNonce`** with the agent address (needed for Phase 4 memos). Fails if the address is not yet a primary or registered additional signer. `signerNonce` is `null` only for primary-wallet login.
 5. Call authenticated routes with `Authorization: Bearer <accessToken>`.
 
 **Source of truth for paths and schemas:** [https://coinoperated.finance/openapi.yaml](https://coinoperated.finance/openapi.yaml) (human UI: [/docs/api](https://coinoperated.finance/docs/api)). Prefer OpenAPI over inventing endpoints.
@@ -88,8 +88,16 @@ The owner grant is **to the agent address**, not to the relayer. To execute work
    ```
 
 6. Build `permissionContext` as `[parent, child]` (`encodeDelegations` / `toRelayerJson`). Bundle fee `transfer` to `feeCollector` + work in `executions[]` (**batch** on one chain).
-7. `relayer_estimate7710Transaction` → adjust fee/re-sign if needed → `relayer_send7710Transaction` with estimate `context`, optional `memo`, and a reused app **`delegationSecret`**.
-8. **Multichain** (fee on one chain, work on another, or multi-leg): repeat redelegate/`auth7702` per chain as needed; use `relayer_estimate7710TransactionMultichain` / `relayer_send7710TransactionMultichain` and `contextByChainId` (see public-relayer).
+7. `relayer_estimate7710Transaction` → adjust fee/re-sign if needed → `relayer_send7710Transaction` with estimate `context`, a reused app **`delegationSecret`**, plus **activity attribution** (required for CoinOperated Agent Activity):
+   - `destinationUrl`: `https://coinoperated.finance/api/webhooks/relayer`
+   - `memo`: JSON string **≤256 characters** (relayer hard limit):
+
+     ```json
+     {"source":"coinoperated","signerAddress":"<agent EOA>","nonce":"<signerNonce from SIWE token>","justification":"<short reason>"}
+     ```
+
+     Keep `justification` short so the whole memo fits in 256 chars; truncate if needed. CoinOperated matches `signerAddress` + `nonce` to the additional signer and records status/hash from webhooks.
+8. **Multichain** (fee on one chain, work on another, or multi-leg): repeat redelegate/`auth7702` per chain as needed; use `relayer_estimate7710TransactionMultichain` / `relayer_send7710TransactionMultichain` and `contextByChainId` (see public-relayer). Put the same `destinationUrl` + `memo` on each send entry that should appear in Agent Activity.
 
 Do **not** use `aw send` for this path — that broadcasts a raw EOA tx and is not the CoinOperated grant redeem flow.
 

@@ -45,7 +45,7 @@ Production base: `https://coinoperated.finance`.
    { "message": "<prepared SIWE message>", "signature": "0x…" }
    ```
 
-   Success includes `accessToken`, `tokenType` (`Bearer`), `expiresIn` (seconds), and `user` (parent account). The address must already be a primary wallet or a registered additional signer — this endpoint does **not** create new users.
+   Success includes `accessToken`, `tokenType` (`Bearer`), `expiresIn` (seconds), `user` (parent account), and `signerNonce` (string when this address is an additional signer; `null` for primary). Persist **`signerNonce`** — it goes in relayer `params.memo` JSON so CoinOperated can attribute spends to Agent Activity. The address must already be a primary wallet or a registered additional signer — this endpoint does **not** create new users.
 
 5. **Authorized calls**
 
