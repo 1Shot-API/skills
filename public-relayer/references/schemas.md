@@ -99,7 +99,7 @@ type GetFeeDataResult = {
     name?: string;
   };
   rate: number; // exchange rate: native gas units → payment-token atoms
-  minFee: string; // floor fee in token atoms (≈ $0.01 worth)
+  minFee: string; // HUMAN DECIMAL floor (e.g. "0.01"), NOT atoms — ≈ $0.01 worth
   expiry: number; // unix seconds; quote unusable after this
   gasPrice: `0x${string}`; // current gas price in wei (hex)
   feeCollector: `0x${string}`;
@@ -111,6 +111,8 @@ type GetFeeDataResult = {
 ### Computing the fee amount
 
 ```ts
+import { parseUnits } from "viem";
+
 const nativeFeeWei = BigInt(feeData.gasPrice) * BigInt(estimatedGasUsed);
 // Convert to payment-token atoms; rate already accounts for token decimals
 const tokenAtoms = scaleNativeToToken(
@@ -118,17 +120,20 @@ const tokenAtoms = scaleNativeToToken(
   feeData.rate,
   feeData.token.decimals,
 );
-const feeAmount =
-  tokenAtoms < BigInt(feeData.minFee) ? BigInt(feeData.minFee) : tokenAtoms;
+// minFee is "0.01" (decimal) — never BigInt(feeData.minFee)
+const minFeeAtoms = parseUnits(feeData.minFee, feeData.token.decimals);
+const feeAmount = tokenAtoms < minFeeAtoms ? minFeeAtoms : tokenAtoms;
 ```
 
-**Always floor at `minFee`.** It represents $0.01 in the payment token; the relayer rejects payment below it with `4200 InsufficientPayment`.
+**Always floor at `minFee`.** It represents ≈ $0.01 in the payment token; the relayer rejects payment below it with `4200 InsufficientPayment`.
+
+**Units reminder:** `getFeeData.minFee` = human decimal string; `estimate.requiredPaymentAmount` = atom integer string (safe for `BigInt`).
 
 ### Quote lifetime
 
-Treat the quote as valid for `(expiry - now)` (**`quoteValidSeconds`**, currently **30 seconds**). Fetch fresh quotes between retries. Do not submit a stale `context` — send rejects expired quotes instead of underpaying later.
+Treat the quote as valid for `(expiry - now)` (**`quoteValidSeconds`**, currently **~30 seconds**). Fetch fresh quotes between retries. Do not submit a stale `context` — send rejects expired quotes instead of underpaying later. After a user-approved fee **cap**, re-estimate if the prior quote aged out and send only if the new fee ≤ cap.
 
-**Prefer `relayer_estimate7710Transaction`** when the signed bundle exists — estimate returns `requiredPaymentAmount` and signed `context` from a server-side 1Shot gas simulation.
+**Prefer `relayer_estimate7710Transaction`** when the signed bundle exists — estimate returns `requiredPaymentAmount` (atoms) and signed `context` from a server-side 1Shot gas simulation.
 
 ---
 

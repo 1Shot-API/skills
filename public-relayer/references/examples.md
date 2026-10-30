@@ -78,6 +78,8 @@ export type Estimate7710Result = {
 Prefer **`relayer_estimate7710Transaction`** when the signed bundle exists — the relayer simulates gas and returns `requiredPaymentAmount` plus signed `context`. Use the helper below only for rough quotes before the bundle is built.
 
 ```ts
+import { parseUnits } from "viem";
+
 export function computeFeeAmount(
   feeData: { gasPrice: `0x${string}`; rate: number; minFee: string; token: { decimals: number } },
   estimatedGasUsed: bigint,
@@ -87,12 +89,13 @@ export function computeFeeAmount(
   // Simple approach: do the float multiplication, then floor; for production, prefer fixed-point.
   const tokenAtomsFloat = Number(nativeFeeWei) * feeData.rate;
   const tokenAtoms = BigInt(Math.ceil(tokenAtomsFloat));
-  const minFee = BigInt(feeData.minFee);
-  return tokenAtoms < minFee ? minFee : tokenAtoms;
+  // getFeeData.minFee is a HUMAN DECIMAL (e.g. "0.01"), NOT atoms — never BigInt(minFee)
+  const minFeeAtoms = parseUnits(feeData.minFee, feeData.token.decimals);
+  return tokenAtoms < minFeeAtoms ? minFeeAtoms : tokenAtoms;
 }
 ```
 
-> For production, replace the float multiplication with a fixed-point conversion to avoid precision loss for large gas amounts.
+> Prefer `estimate.requiredPaymentAmount` (atom integer string — safe for `BigInt`) once the bundle exists. For production, replace the float multiplication with a fixed-point conversion to avoid precision loss for large gas amounts.
 
 ---
 
