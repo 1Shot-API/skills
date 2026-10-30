@@ -171,7 +171,7 @@ type Estimate7710TransactionResult = {
 
 ### Wiring to send
 
-Pass `result.context` as `params.context` on `relayer_send7710Transaction` to lock **gas price and TWAP `rate`** to this estimate (quote TTL is **`quoteValidSeconds`**, currently **30 seconds**). Invalid or expired `context` is rejected at send time (JSON-RPC `4204 Quote Expired` when expired) — the relayer does not silently drop a bad lock and re-price live. Job-time gas re-sims may differ by a few USDC micros after a fee-amount bump; the relayer accepts payments within a small shortfall tolerance (~100 USDC micros).
+Pass `result.context` as `params.context` on `relayer_send7710Transaction` to lock **chain, gas price, and TWAP `rate`** to this estimate (quote TTL is **`quoteValidSeconds`**, currently **30 seconds**). Invalid or expired `context` is rejected at send time (JSON-RPC `4204 Quote Expired` when expired; **`4217 Quote Chain Mismatch`** when the signed quote `chain` does not match `params.chainId`) — the relayer does not silently drop a bad lock and re-price live. For multichain, set each `params[i].context` from `contextByChainId[params[i].chainId]`; never reuse one chain's quote on another. Job-time gas re-sims may differ by a few USDC micros after a fee-amount bump; the relayer accepts payments within a small shortfall tolerance (~100 USDC micros).
 
 ---
 
@@ -337,6 +337,7 @@ Always handle `100`, `110`, `200`, `400`, `500` explicitly. Stop polling on any 
 | 4213   | Invalid Task ID            | If supplying `taskId`, must be 32-byte 0x-hex.                                                               |
 | 4214   | Duplicate Task ID          | Omit `taskId` (server generates) or use a fresh random 32 bytes.                                             |
 | 4216   | Delegation Secret Mismatch | Send your app’s `delegationSecret` (bound on first submit for that delegation), or omit only if never bound. |
+| 4217   | Quote Chain Mismatch       | `params.context` was signed for a different chain than `params.chainId`. Use the matching estimate/`getFeeData` quote for that chain (or `contextByChainId[chainId]`). |
 
 ---
 

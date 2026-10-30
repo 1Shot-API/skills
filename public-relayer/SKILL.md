@@ -183,12 +183,14 @@ The relayer validates delegations, runs 1Shot gas simulation, and returns synchr
 - `context` — signed price-lock quote for the first payment chain; pass as `params.context` on single-chain send.
 - `contextByChainId` — per-chain signed quotes; for multichain send, set each `params[i].context = contextByChainId[params[i].chainId]`.
 
+Each signed quote embeds the **chain** (and gasPrice/rate) it was issued for. On send, the relayer rejects a `context` whose signed chain does not match that param's `chainId` (**4217 QUOTE_CHAIN_MISMATCH**). Never reuse one chain's quote on another.
+
 **Production loop**:
 
 1. POST estimate with the current bundle (mock fee ≥ `minFee`).
 2. If `success === false`, fix the bundle from `error` (missing payment, below minFee, simulation revert, invalid delegation).
 3. If `requiredPaymentAmount` differs from your mock fee, update the fee execution amount and delegation `maxAmount`, then **re-sign** the delegation.
-4. Immediately send with the `context` / `contextByChainId` from the estimate response to lock the quote (**30 seconds** TTL).
+4. Immediately send with the `context` / `contextByChainId` from the estimate response to lock the quote (**30 seconds** TTL). Match each param's `context` to that param's `chainId`.
 
 This supersedes client-side `eth_estimateGas` + manual fee math when the full bundle is ready.
 

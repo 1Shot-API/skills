@@ -1194,6 +1194,7 @@ Key points:
 | -------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `@metamask/delegation-toolkit` not found / deprecated | Migrate to `@metamask/smart-accounts-kit`: main export for delegations, `/actions` for `erc7715ProviderActions`, `/utils` for `decodeDelegations`. |
 | `4204 Quote Expired`                               | Submitted >45s after estimate or `relayer_getFeeData`. Re-estimate and resubmit immediately. |
+| `4217 Quote Chain Mismatch`                        | `params.context` signed for a different chain than `params.chainId`. Use that chain's estimate/`contextByChainId` entry. |
 | `4200 Insufficient Payment`                        | Forgot to floor at `minFee` or under-estimated `gasUsed`; use `requiredPaymentAmount` from estimate. |
 | `estimate success: false` + mock payment message   | Include an ERC-20 `transfer` to `feeCollector` in executions (mock fee ≥ `minFee`). |
 | `estimate success: false` + minimum fee          | Increase mock fee amount to at least chain/token `minFee`. |
