@@ -23,16 +23,19 @@ export function readPassword(passwordPath) {
   return fs.readFileSync(passwordPath, "utf8").trim();
 }
 
+function normalizeAddressHex(raw) {
+  const hex = String(raw).replace(/^0x/i, "");
+  if (!/^[a-fA-F0-9]{40}$/.test(hex)) {
+    return null;
+  }
+  return `0x${hex}`;
+}
+
 /**
- * Resolve address via cast without printing the key.
+ * Resolve address without printing the key.
+ * Prefers the address embedded in the keystore JSON; falls back to cast, then decrypt.
  */
 export function getAddress(home, name) {
-  const cast = findCast();
-  if (!cast) {
-    throw Object.assign(new Error("cast not found. Install Foundry: https://getfoundry.sh"), {
-      code: "MISSING_CAST",
-    });
-  }
   const { keystorePath, passwordPath } = accountPaths(home, name);
   if (!fs.existsSync(keystorePath)) {
     throw Object.assign(new Error(`Wallet keystore not found: ${keystorePath}`), {
@@ -44,41 +47,69 @@ export function getAddress(home, name) {
       code: "NO_WALLET",
     });
   }
-  const r = runCast(cast, [
-    "wallet",
-    "address",
-    "--keystore",
-    keystorePath,
-    "--password-file",
-    passwordPath,
-  ]);
-  if (r.status !== 0) {
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(keystorePath, "utf8"));
+    const fromJson = normalizeAddressHex(parsed?.address);
+    if (fromJson) {
+      return fromJson;
+    }
+  } catch {
+    // fall through
+  }
+
+  const cast = findCast();
+  if (cast) {
+    const r = runCast(cast, [
+      "wallet",
+      "address",
+      "--keystore",
+      keystorePath,
+      "--password-file",
+      passwordPath,
+    ]);
+    if (r.status === 0) {
+      const address = r.stdout
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .find((s) => s.startsWith("0x"));
+      if (address) {
+        return address;
+      }
+    }
+  }
+
+  throw Object.assign(
+    new Error(
+      "Could not resolve wallet address from keystore JSON. Re-run create, or install Foundry cast.",
+    ),
+    { code: "RUNTIME" },
+  );
+}
+
+async function loadEthersWallet() {
+  try {
+    const { Wallet } = await import("ethers");
+    return Wallet;
+  } catch {
     throw Object.assign(
-      new Error(r.stderr || r.stdout || "cast wallet address failed"),
-      { code: "RUNTIME" },
+      new Error(
+        "ethers not installed. Run: cd scripts && npm install  (from the agent-wallet skill root)",
+      ),
+      { code: "MISSING_DEPS" },
     );
   }
-  const address = r.stdout
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .find((s) => s.startsWith("0x"));
-  if (!address) {
-    throw Object.assign(new Error("cast did not return an address"), { code: "RUNTIME" });
-  }
-  return address;
 }
 
 /**
- * Create encrypted keystore with cast. Idempotent unless force.
+ * Create encrypted keystore. Prefers pure Node (ethers) so Foundry is optional.
+ * Falls back to `cast wallet new` if ethers is unavailable. Idempotent unless force.
  */
-export function createWallet({ home = defaultWalletHome(), name = "agent", force = false } = {}) {
-  const cast = findCast();
-  if (!cast) {
-    throw Object.assign(new Error("cast not found. Install Foundry: https://getfoundry.sh"), {
-      code: "MISSING_CAST",
-    });
-  }
-
+export async function createWallet({
+  home = defaultWalletHome(),
+  name = "agent",
+  force = false,
+} = {}) {
   const paths = accountPaths(home, name);
   ensureDir(paths.keystoresDir);
   ensureDir(paths.home);
@@ -112,7 +143,47 @@ export function createWallet({ home = defaultWalletHome(), name = "agent", force
   });
   chmodPrivate(paths.passwordPath);
 
-  // Snapshot existing UTC files so we can detect a newly written one
+  try {
+    const Wallet = await loadEthersWallet();
+    const wallet = Wallet.createRandom();
+    const json = await wallet.encrypt(password);
+    fs.writeFileSync(paths.keystorePath, json, { encoding: "utf8", mode: 0o600 });
+    chmodPrivate(paths.keystorePath);
+    return {
+      created: true,
+      address: wallet.address,
+      name: paths.account,
+      keystorePath: paths.keystorePath,
+      passwordPath: paths.passwordPath,
+      storageTier: "keystore+password-file",
+    };
+  } catch (e) {
+    if (e?.code !== "MISSING_DEPS") {
+      try {
+        fs.rmSync(paths.passwordPath, { force: true });
+      } catch {
+        // ignore
+      }
+      throw e;
+    }
+    // ethers missing — fall through to optional cast
+  }
+
+  const cast = findCast();
+  if (!cast) {
+    try {
+      fs.rmSync(paths.passwordPath, { force: true });
+    } catch {
+      // ignore
+    }
+    throw Object.assign(
+      new Error(
+        "ethers not available and cast not found. Run: cd scripts && npm install  (Foundry cast is optional)",
+      ),
+      { code: "MISSING_DEPS" },
+    );
+  }
+
   const before = new Set(
     fs.existsSync(paths.keystoresDir) ? fs.readdirSync(paths.keystoresDir) : [],
   );

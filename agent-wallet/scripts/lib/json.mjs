@@ -8,13 +8,23 @@ export const EXIT = {
   RUNTIME: 5,
 };
 
+/** JSON.stringify replacer — viem auth/signatures may include BigInt (`v`, `nonce`). */
+export function jsonReplacer(_key, value) {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  return value;
+}
+
 export function ok(data) {
-  process.stdout.write(JSON.stringify({ ok: true, ...data }) + "\n");
+  process.stdout.write(JSON.stringify({ ok: true, ...data }, jsonReplacer) + "\n");
   process.exit(EXIT.OK);
 }
 
 export function fail(code, message, extra = {}) {
-  process.stderr.write(JSON.stringify({ ok: false, error: message, ...extra }) + "\n");
+  process.stderr.write(
+    JSON.stringify({ ok: false, error: message, ...extra }, jsonReplacer) + "\n",
+  );
   process.exit(code);
 }
 

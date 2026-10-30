@@ -75,8 +75,8 @@ check("unknown command → 4", () => {
 
 const doctor = JSON.parse(run(["doctor"]).stdout.trim().split("\n").pop());
 
-if (doctor.cast) {
-  check("create + address + sign-personal", () => {
+if (doctor.depsOk || doctor.cast) {
+  check("create + address + sign-personal (Node/ethers; cast optional)", () => {
     const c = run(["create"]);
     assertNoLeak("create", c.stdout + c.stderr);
     if (c.status !== 0) throw new Error(c.stderr || c.stdout);
@@ -126,7 +126,7 @@ if (doctor.cast) {
     });
   }
 } else {
-  console.error("skip create/sign (cast not installed)");
+  console.error("skip create/sign (npm deps + cast both missing)");
   check("create fails with missing deps code", () => {
     const r = run(["create"]);
     if (r.status !== 2) throw new Error(`expected exit 2, got ${r.status}`);

@@ -18,7 +18,7 @@ description: >-
 license: MIT
 metadata:
   author: 1Shot-API
-  version: "1.1.0"
+  version: "1.3.0"
   repository: https://github.com/1Shot-API/skills
 ---
 
@@ -59,15 +59,49 @@ The relayer accepts a signed MetaMask delegation from a `7702StatelessDelegator`
 - **JWKS for webhook verification**: `GET https://relayer.1shotapi.com/.well-known/jwks.json` (Ed25519, `kty: "OKP"`, `crv: "Ed25519"`).
 - **Client packages**:
   - `@metamask/smart-accounts-kit` (recommend `^2.0.0`; required for Arc Testnet and Robinhood Chain) — single package for all delegation and smart-account flows:
-    - Main export: `toMetaMaskSmartAccount`, `createDelegation`, `ScopeType`, `Implementation.Stateless7702`, `getSmartAccountsEnvironment`.
+    - Main export: `toMetaMaskSmartAccount`, `createDelegation`, `ScopeType`, `Implementation.Stateless7702`, `getSmartAccountsEnvironment`, `PREFERRED_VERSION`.
     - `@metamask/smart-accounts-kit/actions`: `erc7715ProviderActions` for browser EIP-7715 flows.
-    - `@metamask/smart-accounts-kit/utils`: `decodeDelegations` to decode permission context from the wallet.
+    - `@metamask/smart-accounts-kit/utils`: `decodeDelegations` to decode permission context from the wallet; **`overrideDeployedEnvironment`** to register chains missing from the published deployment registry (see Arc mainnet below).
   - `viem` for `createPublicClient`, `encodeFunctionData`, `signAuthorization`, `privateKeyToAccount`.
   - `@noble/ed25519` (or any Ed25519 verifier) for webhook signature verification.
 
 **Method naming:** multichain variants append `Multichain` directly to the base method name (no underscore), e.g. `relayer_send7710Transaction` → `relayer_send7710TransactionMultichain`.
 
 **Migration note:** `@metamask/delegation-toolkit` is deprecated. Remove it from client `package.json` and use `@metamask/smart-accounts-kit` with the subpath imports above.
+
+### Arc mainnet (5042): register Smart Accounts environment
+
+`@metamask/delegation-deployments` (pulled in by the kit) lists **Arc Testnet** (`5042002`) but **not Arc mainnet** (`5042`), even though MetaMask Framework **v1.3.0** is CREATE2-deployed at the **same addresses** on both. Without an override, `getSmartAccountsEnvironment(5042)`, `toMetaMaskSmartAccount`, and EIP-7702 auth targeting the Stateless7702 impl throw:
+
+`No contracts found for version 1.3.0 chain 5042`
+
+**Patch once at process/module startup** (before any kit call for chain `5042`). Copy the Arc Testnet environment onto Arc mainnet via `overrideDeployedEnvironment`. Idempotent: skip if `getSmartAccountsEnvironment(5042)` already succeeds (future kit releases may ship 5042 natively).
+
+```ts
+import {
+  getSmartAccountsEnvironment,
+  PREFERRED_VERSION,
+} from "@metamask/smart-accounts-kit";
+import { overrideDeployedEnvironment } from "@metamask/smart-accounts-kit/utils";
+
+const ARC_MAINNET = 5042;
+const ARC_TESTNET = 5042002;
+
+export function registerSmartAccountsEnvironments(): void {
+  try {
+    getSmartAccountsEnvironment(ARC_MAINNET);
+    return;
+  } catch {
+    // Missing from published registry — inject Arc Testnet's identical env.
+  }
+  const template = getSmartAccountsEnvironment(ARC_TESTNET);
+  overrideDeployedEnvironment(ARC_MAINNET, PREFERRED_VERSION, template);
+}
+
+registerSmartAccountsEnvironments();
+```
+
+Call this from each entrypoint that uses the kit on Arc (host app bootstrap, worker, or CLI). The **agent-wallet** skill applies the same side-effect in `scripts/lib/registerSmartAccountsEnvironments.mjs` so `aw auth7702` / `delegation-*` / `redelegate` work with `--chain-id 5042`. The embedded 1Shot Wallet Branding Layer registers the same override internally — hosts that only use Path A do not need this in their own code.
 
 ### Browser extension integration (recommended for UI apps)
 
@@ -122,7 +156,7 @@ Cache the result for the session; it changes rarely.
 Before quoting or submitting, assemble the full ERC-7710 bundle:
 
 1. **Initialize the smart account** with `toMetaMaskSmartAccount({ implementation: Implementation.Stateless7702, address: <delegator EOA address>, signer })`.
-2. **(If first use)** sign an EIP-7702 `authorizationList` entry with `account.signAuthorization({ chainId, contractAddress: getSmartAccountsEnvironment(chainId).implementations.EIP7702StatelessDeleGatorImpl, nonce })` — include it on estimate and send.
+2. **(If first use on that chain)** sign an EIP-7702 `authorizationList` entry targeting `getSmartAccountsEnvironment(chainId).implementations.EIP7702StatelessDeleGatorImpl`. Use the account’s **current pending** nonce from `publicClient.getTransactionCount({ address, blockTag: "pending" })`. Do **not** pass viem `executor: "self"` — that signs `nonce + 1` (EOA-as-outer-sender); the relayer sends the outer tx and requires the **unbumped** pending nonce. Include the same `authorizationList` on **estimate and send**. Agent-wallet: `aw auth7702 --rpc … --chain-id N` already signs this way.
 3. **Generate permission context**:
    - Browser extension path: call `requestExecutionPermissions` (with `to: targetAddress`), decode `granted[0].context` with `decodeDelegations`, and serialize with `toRelayerJson`.
    - Local signer path: create a delegation with `createDelegation({ to: targetAddress (from Step 1), from: smartAccount.address, environment: smartAccount.environment, salt, scope: { type: ScopeType.Erc20TransferAmount | ScopeType.FunctionCall, ... maxAmount: feeAmount + workAmount } })` and sign with `smartAccount.signDelegation({ delegation })`.
@@ -236,8 +270,11 @@ If polling is unavoidable, call `relayer_getStatus` with `{ id: <TaskId>, logs: 
 - **Unsigned estimate (quote before signing)**: on estimate only, set every delegation `signature` to `""`, `bytes32(0)` (`0x` + 64 zero hex digits), or the recommended 65-byte all-zero placeholder; the relayer injects estimate-only **DelegatorEstimateShim** **code** at each delegator via Geth `stateOverride` (including **EOAs not yet EIP-7702 upgraded** on chain). Real on-chain token balances and allowances still apply — not faked. For a **first-time EIP-7702 upgrade**, you may also send `authorizationList` with correct `address`, `chainId`, and `nonce` but placeholder **`r`/`s`** (32-byte zero hex) and **`yParity` `0`** — only when delegation signatures are placeholders; the relayer adds fixed auth gas to the quote (default **40100** gas) and does not forward invalid auth to simulation. **Send requires real delegation and authorization signatures** — placeholders are rejected on `relayer_send7710Transaction*`.
 - **Self-sponsored vs. sponsored**: if the same account pays the fee and executes the work, sign **one delegation** that scopes `feeAmount + workAmount` and bundle two `executions` (fee transfer + work). If a separate sponsor pays the fee, sign **two delegations** (one each from sponsor and delegator) and submit two `transactions[]` entries with their own `permissionContext`. The relayer merges them into a single `redeemDelegations` batch.
 - **`ScopeType` choice**: `ScopeType.Erc20TransferAmount` is simplest and works for fee + work transfers. Use `ScopeType.FunctionCall` (token + selector) when you need broader function coverage in one batch — the `Erc20TransferAmount` enforcer can revert with `CaveatEnforcer:invalid-call-type` for some batched call patterns.
-- **EIP-7702 authorization**: only one `authorizationList` entry is allowed per request. If both delegator and sponsor need an upgrade, do them in two separate calls (or upgrade one out-of-band first).
+- **EIP-7702 authorization**: only one `authorizationList` entry is allowed per request. If both delegator and sponsor need an upgrade, do them in two separate calls (or upgrade one out-of-band first). Sign with **pending nonce** (no `executor: "self"`). Pass on estimate **and** send for the first redeem on a chain.
+- **Delegation chain order (leaf → root)**: `permissionContext` / `encodeDelegations` must be **`[child, parent, …]`** — the **first** delegation’s `delegate` must be the relayer **`targetAddress`**. Root-first `[parent, child]` fails estimate with *First delegation's delegate must be the relayer Target wallet*.
+- **Scope amounts**: under kit v2, pass `maxAmount` (and similar) as **`bigint`** (or let agent-wallet coerce decimal JSON strings). A decimal string like `"1050000"` passed raw is treated as **hex digits** and silently over-authorizes.
 - **Salt**: always pass a fresh random 32-byte hex `salt` to `createDelegation` to avoid replay collisions.
+- **Arc mainnet (`5042`)**: call `registerSmartAccountsEnvironments()` (or the snippet above) before `getSmartAccountsEnvironment(5042)` — kit registry has Testnet only; addresses match via CREATE2. Arc RPC for `auth7702`: `https://rpc.mainnet.arc.io`.
 - **`memo` vs `context` vs `taskId` vs `delegationSecret`**: `context` locks the fee quote from estimate; `taskId` is the relayer-assigned (or client-supplied) task identifier; `memo` is your opaque label echoed back in status and webhooks for correlation; `delegationSecret` is one app-level secret reused on all your sends (not one secret per delegation) to bind open delegations against public replay (send only).
 - **BigInts to JSON**: relayer JSON-RPC requires plain JSON. Convert `bigint` values in the signed delegation struct to `0x`-prefixed hex strings before sending. Convert `Uint8Array` with `bytesToHex` from `viem/utils`.
 
@@ -350,8 +387,8 @@ Production session-key path: user grants a **host-controlled session account**; 
 1. Host generates or loads a **session account** (local signer; private key stays in host memory — not the user's passkey).
 2. **`wallet_requestExecutionPermissions`** with **`to: sessionAccountAddress`** and periodic ERC-20 scope (offline/agent budget).
 3. Wallet returns **`response.context`** (parent grant). Host decodes; session account **redelegates** to **`targetAddress`** with narrower caveats for this execution (`FunctionCall` + `exactCalldata`, or `Erc20TransferAmount` capped to fee + work — same attenuation idea as in-wallet send).
-4. Build **`permissionContext`** as an encoded **delegation chain** (parent + signed redelegation) via **`encodeDelegations`**; estimate + **`relayer_send7710Transaction`** with **`permissionContext`** containing the full chain.
-5. Session account may need EIP-7702 smart-account shape on first use; include **`authorizationList`** on send when upgrading (same constraint as elsewhere in this skill).
+4. Build **`permissionContext`** as an encoded **delegation chain in leaf-to-root order**: **`encodeDelegations([signedRedelegation, rootDelegation])`** (child first — child’s `delegate` is `targetAddress`). Estimate + **`relayer_send7710Transaction`** with that chain.
+5. Session account may need EIP-7702 smart-account shape on first use; include **`authorizationList`** (pending nonce, Stateless7702 impl) on **estimate and send** when upgrading.
 
 Redelegation may only **narrow** parent scope (caveats stack). See MetaMask kit [create redelegation](https://docs.metamask.io/smart-accounts-kit/guides/advanced-permissions/create-redelegation/) (`redelegatePermissionContext` or `createDelegation({ parentDelegation })`).
 
@@ -372,17 +409,17 @@ Use when a **coding agent** holds an EOA in Foundry keystores (`aw.mjs`) and mus
 | Sub-path | Parent grant | Agent signs | Example |
 |----------|--------------|-------------|---------|
 | **D1 — Self-sponsored** | None — agent creates a root delegation `to: targetAddress` | `aw delegation-sign` (+ `auth7702` on first use) | [Example 0d](references/examples.md) (D1) |
-| **D2 — User grant + redelegate** (CoinOperated / session-key style) | Owner granted periodic ERC-20 to the **agent address** | `aw redelegate --parent …` to `targetAddress`, then estimate/send with **chain** `[parent, child]` | [Example 0d](references/examples.md) (D2) |
+| **D2 — User grant + redelegate** (CoinOperated / session-key style) | Owner granted periodic ERC-20 to the **agent address** | `aw redelegate --parent …` to `targetAddress`, then estimate/send with **chain** `[child, parent]` (leaf first) | [Example 0d](references/examples.md) (D2) |
 
 **Order for D2 (most common after CoinOperated linking):**
 
-1. Load the signed parent (e.g. CoinOperated `GET /api/agent/delegations` → `permissionContext` / stored delegation JSON). Never ask the user for the agent private key.
+1. Load the signed parent (e.g. CoinOperated `GET /api/agent/delegations` → write `delegation` **string** raw to `parent.json`). Never ask the user for the agent private key.
 2. `relayer_getCapabilities` → `targetAddress`, `feeCollector`, payment token for the work chain (and fee chain if multichain).
-3. First use on a chain: `node scripts/aw.mjs auth7702 --rpc … --chain-id N` and attach `authorizationList` on estimate/send.
-4. Write a child input JSON with `to: targetAddress`, scope **narrower** than the parent (`erc20TransferAmount` ≥ fee + work for this submit), fresh `salt`.
+3. **First use on a chain (required):** `node scripts/aw.mjs auth7702 --rpc https://rpc.mainnet.arc.io --chain-id 5042` (Arc) and attach `authorizationList: [authorization]` on **estimate and send**. Skip only after the EOA already has Stateless7702 code on that chain.
+4. Write a child input JSON with `to: targetAddress`, scope **narrower** than the parent (`erc20TransferAmount` ≥ fee + work for this submit; amounts as decimal strings — `aw` coerces to `bigint`), fresh `salt`.
 5. `node scripts/aw.mjs redelegate --parent parent.json --file child.json` → `signedDelegation` (child).
-6. Build `permissionContext` as `[toRelayerJson(parent), toRelayerJson(child)]` (or `decodeDelegations(encodeDelegations([parent, child]))` then `toRelayerJson`).
-7. Bundle `executions[]` (fee `transfer` to `feeCollector` + work). Prefer **`relayer_estimate7710Transaction`** then send with `context` (30s lock). Reuse one app-level **`delegationSecret`**.
+6. Build `permissionContext` as **`[toRelayerJson(child), toRelayerJson(parent)]`** (or `decodeDelegations(encodeDelegations([child, parent]))`). First entry’s `delegate` **must** equal `targetAddress`.
+7. Bundle `executions[]` (fee `transfer` to `feeCollector` + work). For CoinOperated agents, prefer work = transfer USDC **to the agent address**, then trade from the agent wallet (see **coinoperated** skill). Prefer **`relayer_estimate7710Transaction`** then send with `context` (30s lock). Reuse one app-level **`delegationSecret`**.
 8. **Batching:** multiple `executions` in one `transactions[]` entry share one `permissionContext` (same chain). Multiple `transactions[]` entries = multiple permission contexts in one redeem (e.g. sponsor + worker).
 9. **Multichain:** build one param per chain (each with its own redelegation/`authorizationList` as needed); use `relayer_estimate7710TransactionMultichain` / `relayer_send7710TransactionMultichain` and set each `params[i].context = contextByChainId[chainId]`.
 

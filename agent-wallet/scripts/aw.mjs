@@ -48,13 +48,13 @@ Usage: node aw.mjs <command> [flags]
 
 Commands:
   doctor                 Detect cast, node, wallet, deps
-  create                 Create encrypted keystore (--name, --force)
+  create                 Create encrypted keystore (--name, --force); ethers/Node by default
   address                Print wallet address (--name)
-  sign-personal          EIP-191 personal_sign (--message)
-  sign-hash              Sign raw hash (--hash, cast --no-hash)
-  sign-typed             Sign EIP-712 typed data (--file)
-  send                   Broadcast tx (--rpc --to [--value] [--data] [--chain-id])
-  mktx                   Signed raw tx without broadcast (same flags as send)
+  sign-personal          EIP-191 personal_sign (--message); viem if cast missing
+  sign-hash              Sign raw hash (--hash); viem if cast missing
+  sign-typed             Sign EIP-712 typed data (--file); requires cast
+  send                   Broadcast tx (--rpc --to …); requires cast
+  mktx                   Signed raw tx without broadcast; requires cast
   auth7702               Sign EIP-7702 Stateless7702 authorization (--rpc --chain-id)
   delegation-create      Build unsigned EIP-7710 delegation (--file)
   delegation-sign        Sign EIP-7710 delegation (--file)
@@ -119,7 +119,7 @@ function cmdDoctor(flags) {
   const version = cast ? castVersion(cast) : null;
   const exists = walletExists(home, name);
   let address;
-  if (exists && cast) {
+  if (exists) {
     try {
       address = getAddress(home, name);
     } catch {
@@ -129,6 +129,7 @@ function cmdDoctor(flags) {
   const depsOk = depsInstalled();
   ok({
     cast: cast ? { path: cast, version } : null,
+    castRequiredFor: cast ? [] : ["send", "mktx", "sign-typed"],
     node: process.version,
     platform: process.platform,
     home,
@@ -142,14 +143,14 @@ function cmdDoctor(flags) {
       : `cd ${scriptsDir()} && npm install`,
     foundryHint: cast
       ? null
-      : "Install Foundry: https://getfoundry.sh then run foundryup",
+      : "Foundry cast is optional for create/address/sign-personal/sign-hash/auth7702/delegation-*/redelegate after npm install. Required only for send/mktx/sign-typed: https://getfoundry.sh",
   });
 }
 
-function cmdCreate(flags) {
+async function cmdCreate(flags) {
   rejectUnknown(flags, new Set(["name", "home", "force", "help"]));
   try {
-    const result = createWallet({
+    const result = await createWallet({
       home: homeFromFlags(flags),
       name: nameFromFlags(flags),
       force: Boolean(flags.force),
@@ -204,13 +205,36 @@ function signWithCast(home, name, messageArgs) {
   return signature;
 }
 
-function cmdSignPersonal(flags) {
+async function signPersonalNode(home, name, message) {
+  await ensureDeps();
+  const { decryptPrivateKeyHex } = await import("./lib/keystore.mjs");
+  const { privateKeyToAccount } = await import("viem/accounts");
+  const privateKey = await decryptPrivateKeyHex(home, name);
+  const account = privateKeyToAccount(privateKey);
+  return account.signMessage({ message });
+}
+
+async function signHashNode(home, name, hash) {
+  await ensureDeps();
+  const { decryptPrivateKeyHex } = await import("./lib/keystore.mjs");
+  const { privateKeyToAccount } = await import("viem/accounts");
+  const privateKey = await decryptPrivateKeyHex(home, name);
+  const account = privateKeyToAccount(privateKey);
+  return account.sign({ hash });
+}
+
+async function cmdSignPersonal(flags) {
   rejectUnknown(flags, new Set(["name", "home", "message", "help"]));
   requireFlags(flags, ["message"]);
+  const home = homeFromFlags(flags);
+  const name = nameFromFlags(flags);
   try {
-    const signature = signWithCast(homeFromFlags(flags), nameFromFlags(flags), [
-      String(flags.message),
-    ]);
+    if (findCast()) {
+      const signature = signWithCast(home, name, [String(flags.message)]);
+      ok({ signature });
+      return;
+    }
+    const signature = await signPersonalNode(home, name, String(flags.message));
     ok({ signature });
   } catch (e) {
     if (e?.code) mapErr(e);
@@ -218,18 +242,22 @@ function cmdSignPersonal(flags) {
   }
 }
 
-function cmdSignHash(flags) {
+async function cmdSignHash(flags) {
   rejectUnknown(flags, new Set(["name", "home", "hash", "help"]));
   requireFlags(flags, ["hash"]);
   const hash = String(flags.hash);
   if (!/^0x[a-fA-F0-9]{64}$/.test(hash)) {
     fail(EXIT.BAD_ARGS, "--hash must be 0x + 32 bytes hex");
   }
+  const home = homeFromFlags(flags);
+  const name = nameFromFlags(flags);
   try {
-    const signature = signWithCast(homeFromFlags(flags), nameFromFlags(flags), [
-      hash,
-      "--no-hash",
-    ]);
+    if (findCast()) {
+      const signature = signWithCast(home, name, [hash, "--no-hash"]);
+      ok({ signature });
+      return;
+    }
+    const signature = await signHashNode(home, name, hash);
     ok({ signature });
   } catch (e) {
     if (e?.code) mapErr(e);
@@ -462,16 +490,16 @@ async function main() {
         cmdDoctor(flags);
         break;
       case "create":
-        cmdCreate(flags);
+        await cmdCreate(flags);
         break;
       case "address":
         cmdAddress(flags);
         break;
       case "sign-personal":
-        cmdSignPersonal(flags);
+        await cmdSignPersonal(flags);
         break;
       case "sign-hash":
-        cmdSignHash(flags);
+        await cmdSignHash(flags);
         break;
       case "sign-typed":
         cmdSignTyped(flags);

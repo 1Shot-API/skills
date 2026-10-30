@@ -12,6 +12,8 @@ import {
 
 import { decryptPrivateKeyHex, getAddress } from "./keystore.mjs";
 import { defaultWalletHome } from "./paths.mjs";
+// Registers Arc mainnet (5042) via Arc Testnet template — see file comment.
+import "./registerSmartAccountsEnvironments.mjs";
 
 function assertAddress(label, value) {
   if (typeof value !== "string" || !/^0x[a-fA-F0-9]{40}$/.test(value)) {
@@ -29,6 +31,56 @@ function assertChainId(chainId) {
     });
   }
   return n;
+}
+
+/** Kit v2 treats decimal amount *strings* as hex digits — coerce to BigInt. */
+const SCOPE_AMOUNT_KEYS = new Set([
+  "maxAmount",
+  "amount",
+  "periodAmount",
+  "startAmount",
+  "endAmount",
+]);
+
+export function coerceScopeAmounts(scope) {
+  if (scope == null || typeof scope !== "object") {
+    return scope;
+  }
+  const out = { ...scope };
+  for (const key of SCOPE_AMOUNT_KEYS) {
+    if (!(key in out)) continue;
+    const v = out[key];
+    if (typeof v === "bigint") continue;
+    if (typeof v === "number" && Number.isFinite(v)) {
+      out[key] = BigInt(Math.trunc(v));
+      continue;
+    }
+    if (typeof v === "string" && v.trim() !== "") {
+      try {
+        out[key] = BigInt(v.trim());
+      } catch {
+        throw Object.assign(
+          new Error(`scope.${key} must be a decimal or 0x-hex integer string (got ${JSON.stringify(v)})`),
+          { code: "BAD_ARGS" },
+        );
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Relayer-safe EIP-7702 authorization (no BigInt; no unused `v`).
+ */
+export function authorizationToRelayerJson(auth) {
+  return {
+    address: auth.address,
+    chainId: Number(auth.chainId),
+    nonce: Number(auth.nonce),
+    r: auth.r,
+    s: auth.s,
+    yParity: Number(auth.yParity ?? 0),
+  };
 }
 
 /**
@@ -69,7 +121,7 @@ export function buildUnsignedDelegation(input, fromAddress) {
     from,
     to: input.to,
     environment,
-    scope: input.scope,
+    scope: coerceScopeAmounts(input.scope),
   };
   if (input.caveats !== undefined) {
     params.caveats = input.caveats;
@@ -142,7 +194,11 @@ export async function redelegate(home, name, parentDelegation, input) {
 
 /**
  * Sign an EIP-7702 authorization for Stateless7702 impl.
- * Does not broadcast — redemption needs a relayer/bundler.
+ * Does not broadcast — attach as `authorizationList` on relayer estimate/send.
+ *
+ * Important: do **not** use `executor: "self"`. That bumps the signed nonce by +1
+ * (assumes the EOA sends the outer tx). The 1Shot relayer sends the outer tx, so
+ * the auth must use the account's **current pending** nonce.
  */
 export async function signAuth7702({ home, name, rpc, chainId }) {
   const cid = assertChainId(chainId);
@@ -171,7 +227,6 @@ export async function signAuth7702({ home, name, rpc, chainId }) {
   const privateKey = await decryptPrivateKeyHex(home, name);
   const account = privateKeyToAccount(privateKey);
 
-  // Minimal chain object for walletClient
   const chain = {
     id: cid,
     name: `chain-${cid}`,
@@ -179,26 +234,31 @@ export async function signAuth7702({ home, name, rpc, chainId }) {
     rpcUrls: { default: { http: [rpc] } },
   };
 
+  const publicClient = createPublicClient({ chain, transport: http(rpc) });
   const walletClient = createWalletClient({
     account,
     chain,
     transport: http(rpc),
   });
 
-  // Public client optional — signAuthorization works offline for self-executor
-  createPublicClient({ chain, transport: http(rpc) });
-
   try {
-    const authorization = await walletClient.signAuthorization({
+    const nonce = await publicClient.getTransactionCount({
+      address: account.address,
+      blockTag: "pending",
+    });
+    const raw = await walletClient.signAuthorization({
       account,
       contractAddress,
-      executor: "self",
+      chainId: cid,
+      nonce,
     });
+    const authorization = authorizationToRelayerJson(raw);
     return {
       authorization,
       contractAddress,
       address: account.address,
       chainId: cid,
+      nonce,
     };
   } catch (e) {
     throw Object.assign(new Error(`signAuthorization failed: ${e.message}`), {

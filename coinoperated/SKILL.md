@@ -15,13 +15,13 @@ description: >-
 license: MIT
 metadata:
   author: 1Shot-API
-  version: "0.2.0"
+  version: "0.3.0"
   repository: https://github.com/1Shot-API/skills
 ---
 
 # CoinOperated (agent coordinator)
 
-Orchestrate **linking a coding-agent wallet** to [CoinOperated](https://coinoperated.finance), authenticating to the REST API, and **spending** under the owner’s grant via the 1Shot public relayer. CoinOperated never holds agent private keys. The human owner confirms the agent address and signs a limited Arc USDC spending permission in the browser.
+Orchestrate **linking a coding-agent wallet** to [CoinOperated](https://coinoperated.finance), authenticating to the REST API, and **pulling owner USDC into the agent wallet** via the 1Shot public relayer. CoinOperated never holds agent private keys. The human owner confirms the agent address and signs a limited Arc USDC spending permission in the browser.
 
 Humans usually paste a prompt that points here (or at the product mirror):
 
@@ -29,7 +29,9 @@ Humans usually paste a prompt that points here (or at the product mirror):
 Follow https://coinoperated.finance/agents/skill.md to set up a CoinOperated agent wallet and link it to my account.
 ```
 
-Optional Cursor install (you may run these yourself — do not require the user to):
+## Install companion skills
+
+**Cursor (global):**
 
 ```bash
 npx skills add 1Shot-API/skills/coinoperated -g -a cursor -y
@@ -37,11 +39,29 @@ npx skills add 1Shot-API/skills/agent-wallet -g -a cursor -y
 npx skills add 1Shot-API/skills/public-relayer -g -a cursor -y
 ```
 
-Also follow **agent-wallet** for the local EOA and **public-relayer** for `relayer_*` redeem. Human overview: [https://coinoperated.finance/guides/agents](https://coinoperated.finance/guides/agents).
+**Any agent / cloud sandbox (no Cursor):**
+
+```bash
+git clone --depth 1 https://github.com/1Shot-API/skills.git
+cd skills/agent-wallet/scripts && npm install
+# Foundry cast is OPTIONAL for the CoinOperated path (create / SIWE sign / auth7702 / redelegate).
+# Only send/mktx/sign-typed still need cast: https://getfoundry.sh
+```
+
+Skill roots after clone: `skills/coinoperated`, `skills/agent-wallet`, `skills/public-relayer`. Human overview: [https://coinoperated.finance/guides/agents](https://coinoperated.finance/guides/agents).
+
+## Architecture: pull funds, then trade with the agent wallet
+
+The owner grant is an ERC-20 spending permission **to the agent address**. Treat it as a **funding faucet**, not as the vehicle for complex work:
+
+1. **Redeem the grant** through the relayer to move Arc USDC from the owner → **the agent’s own address** (plus the relayer fee leg).
+2. **Trade / route / LiFi / multi-hop logic runs from the agent wallet** with those funds — outside the owner’s caveat scope.
+
+Do **not** try to encode LiFi routes, bridges, or multi-call trading under the owner delegation. Redelegations may only **narrow** the parent; putting complex calldata in the redeem usually fails caveat checks. Pull USDC to yourself first, then operate as a normal self-custodied agent EOA.
 
 ## Phase 1 — Local wallet (agent-wallet)
 
-1. Follow skill **agent-wallet**: `doctor`, then `create` (or `address` if a wallet already exists).
+1. Follow skill **agent-wallet**: `doctor`, then `create` (or `address` if a wallet already exists). After `npm install` under `scripts/`, create/sign work **without Foundry**.
 2. Show the user the **address only** from JSON stdout. Never open keystore or password files.
 3. Pick a short display `name` for the deeplink (agent or product name, max 64 chars). Omit if none.
 
@@ -64,38 +84,104 @@ Also follow **agent-wallet** for the local EOA and **public-relayer** for `relay
 After the user confirms they finished the link flow:
 
 1. `GET https://coinoperated.finance/api/auth/siwe/nonce` → `{ nonce, chainId, domain }`.
-2. Build a SIWE message for the **agent** address using those fields (`statement`: `Sign in to CoinOperated`, `uri`: `https://coinoperated.finance`, `version`: `1`). Details: [references/siwe-agent.md](./references/siwe-agent.md).
-3. Sign with **agent-wallet** `sign-personal --message …` (the prepared SIWE string). Never dump private keys.
-4. `POST https://coinoperated.finance/api/auth/siwe/verify/token` with `{ "message", "signature" }` → `{ accessToken, tokenType, expiresIn, user }`. Fails if the address is not yet a primary or registered additional signer.
+2. Build a SIWE message for the **agent** address — use the exact EIP-4361 template in [references/siwe-agent.md](./references/siwe-agent.md) (includes **Issued At**). Prefer that template over guessing `siwe` package fields (`siwe` is **not** a dependency of agent-wallet).
+3. Sign with **agent-wallet** `sign-personal --message …` (the full prepared string). Never dump private keys.
+4. `POST https://coinoperated.finance/api/auth/siwe/verify/token` with `{ "message", "signature" }` → `{ accessToken, tokenType, expiresIn, user, signerNonce }`.
+   - Fails if the address is not yet a primary or registered additional signer.
+   - **`signerNonce`**: hex correlation nonce for Agent Activity webhooks (see Phase 4). Persist it with the token.
 5. Call authenticated routes with `Authorization: Bearer <accessToken>`.
 
 **Source of truth for paths and schemas:** [https://coinoperated.finance/openapi.yaml](https://coinoperated.finance/openapi.yaml) (human UI: [/docs/api](https://coinoperated.finance/docs/api)). Prefer OpenAPI over inventing endpoints.
 
-First useful check after linking: `GET /api/agent/delegations` (Bearer-only; lists stored grants for the JWT signer). Persist `delegation` / `permissionContext` from that response for Phase 4.
+First useful check after linking: `GET /api/agent/delegations` (Bearer-only; lists stored grants for the JWT signer).
 
-## Phase 4 — Spend via public-relayer (Path D2)
+### Persisting `parent.json` (avoid double-encoding)
 
-The owner grant is **to the agent address**, not to the relayer. To execute work gas-abstracted:
+Each row’s **`delegation` field is already a JSON string** (serialized MetaMask Delegation), not a nested object.
 
-1. Follow skill **public-relayer** Path **D2** and [Example 0d](../public-relayer/references/examples.md) (agent-wallet + redelegate).
-2. `relayer_getCapabilities` for the work chain (Arc USDC for CoinOperated grants) → note **`targetAddress`** and **`feeCollector`**.
-3. Write `parent.json` from the stored signed parent delegation.
-4. First use on that chain: `node scripts/aw.mjs auth7702 --rpc … --chain-id …` and keep `authorization` for send.
-5. Child input: `to: targetAddress`, `erc20TransferAmount` capped to **this** fee + work, fresh `salt`. Then:
+```bash
+# Correct — write the string body once
+node -e "const r=JSON.parse(require('fs').readFileSync(0,'utf8')); const d=r.result?.[0]??r[0]; const raw=typeof d.delegation==='string'?d.delegation:JSON.stringify(d.delegation); require('fs').writeFileSync('parent.json', raw);"
+```
+
+- If you `JSON.stringify(row.delegation)` when it is already a string, `aw redelegate` rejects the double-encoded parent.
+- `permissionContext` (when present) is typically hex / encoded chain data — prefer the `delegation` string for `parent.json`.
+
+## Phase 4 — Pull USDC via public-relayer (Path D2), then act
+
+Follow skill **public-relayer** Path **D2** and [Example 0d](../public-relayer/references/examples.md). Summary for CoinOperated:
+
+### Chain / RPC constants (Arc mainnet)
+
+| Item | Value |
+|------|--------|
+| Chain id (decimal) | `5042` |
+| Chain id (hex) | `0x13b2` |
+| Public RPC | `https://rpc.mainnet.arc.io` |
+| Relayer JSON-RPC | `https://relayer.1shotapi.com/relayers` |
+| Agent Activity webhook | `https://coinoperated.finance/api/webhooks/relayer` |
+
+`GET /api/chains` may not list the RPC URL — use the table above for Arc.
+
+### First redeem on a chain: EIP-7702 upgrade (required)
+
+The agent EOA must become a MetaMask **Stateless7702** smart account on Arc before (or as part of) the first redeem. Sign auth with agent-wallet, then pass it on **both** estimate and send:
+
+```bash
+node scripts/aw.mjs auth7702 --rpc https://rpc.mainnet.arc.io --chain-id 5042
+# → { authorization: { address, chainId, nonce, r, s, yParity }, contractAddress, … }
+```
+
+```ts
+const sendParams = {
+  chainId: "5042",
+  authorizationList: [authorization], // from aw auth7702 — omit on later txs once upgraded
+  transactions: [{ permissionContext, executions }],
+  // …
+};
+```
+
+`aw auth7702` uses the account’s **current pending nonce** (relayer sends the outer tx). Do **not** use viem `executor: "self"` — that signs nonce+1 and breaks relayer redemption. Details: **agent-wallet** / **public-relayer**.
+
+### Spend steps (funding pull)
+
+1. `relayer_getCapabilities` for `"5042"` → **`targetAddress`**, **`feeCollector`**, USDC token.
+2. Write `parent.json` from `GET /api/agent/delegations` as above (raw delegation string).
+3. **First use on Arc:** `auth7702` (see above) and keep `authorization` for `authorizationList`.
+4. Child input: `to: targetAddress`, `erc20TransferAmount` ≥ **this** fee + pull amount, fresh `salt`. Then:
 
    ```bash
    node scripts/aw.mjs redelegate --parent ./parent.json --file ./child-input.json
    ```
 
-6. Build `permissionContext` as `[parent, child]` (`encodeDelegations` / `toRelayerJson`). Bundle fee `transfer` to `feeCollector` + work in `executions[]` (**batch** on one chain).
-7. `relayer_estimate7710Transaction` → adjust fee/re-sign if needed → `relayer_send7710Transaction` with estimate `context`, optional `memo`, and a reused app **`delegationSecret`**.
-8. **Multichain** (fee on one chain, work on another, or multi-leg): repeat redelegate/`auth7702` per chain as needed; use `relayer_estimate7710TransactionMultichain` / `relayer_send7710TransactionMultichain` and `contextByChainId` (see public-relayer).
+5. Build `permissionContext` in **leaf-to-root** order: **`[child, parent]`** (first entry’s `delegate` must be the relayer `targetAddress`). Root-first `[parent, child]` fails with *First delegation's delegate must be the relayer Target wallet*.
+6. `executions[]` for this redeem should be:
+   - ERC-20 `transfer` of the **fee** → `feeCollector`
+   - ERC-20 `transfer` of the **pull amount** → **agent address** (your funding)
+7. Estimate → send with price-lock `context`, app **`delegationSecret`**, and Agent Activity fields below.
+8. After USDC lands in the agent wallet, run LiFi / swaps / other logic **from the agent wallet** (separate txs; not under the owner grant).
 
-Do **not** use `aw send` for this path — that broadcasts a raw EOA tx and is not the CoinOperated grant redeem flow.
+### Agent Activity: `destinationUrl` + `memo` JSON
+
+So spends appear under the owner’s **Agent Activity** tab, every `relayer_send7710Transaction*` must include:
+
+```ts
+destinationUrl: "https://coinoperated.finance/api/webhooks/relayer",
+memo: JSON.stringify({
+  source: "coinoperated",           // required literal
+  signerAddress: agentAddress,      // 0x… agent EOA (additional signer)
+  nonce: signerNonce,               // from SIWE verify/token (0x + 32 hex)
+  justification: "Pull 5 USDC for LiFi route", // optional; shown in UI
+}),
+```
+
+Constraints: `memo` ≤ 256 characters total; omit keys and the row will not ingest (`GET /api/user/agent-activity` stays empty). `signerNonce` is **not** the SIWE login nonce — it is the dedicated field on the token response.
+
+Do **not** use `aw send` for the grant redeem — that broadcasts a raw EOA tx and is not the CoinOperated funding flow.
 
 ## Non-goals
 
-- Full DCA / triggered-plan tutorials — use OpenAPI after auth; execution still goes through **public-relayer** when on-chain work is required.
+- Full DCA / triggered-plan tutorials — use OpenAPI after auth; on-chain work still goes through **public-relayer** when required.
 - Embedding `wallet.1shotapi.com` Host RPC — skill **1shot-wallet** (owner UI, not the agent EOA).
 
 ## See also
@@ -103,5 +189,5 @@ Do **not** use `aw send` for this path — that broadcasts a raw EOA tx and is n
 - [references/deeplinks.md](./references/deeplinks.md)
 - [references/siwe-agent.md](./references/siwe-agent.md)
 - Skill **agent-wallet** — local EOA create / `sign-personal` / `auth7702` / `redelegate`
-- Skill **public-relayer** — `relayer_*` estimate/send, Path D, Example 0d
+- Skill **public-relayer** — `relayer_*` estimate/send, Path D, Example 0d (leaf-to-root chains + `authorizationList`)
 - Skill **1shot-wallet** — embedded wallet Host Layer (owner UI, not agent EOA)

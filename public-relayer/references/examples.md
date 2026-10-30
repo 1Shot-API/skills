@@ -4,6 +4,8 @@ Copy-paste-ready TypeScript patterns for integrating with the 1Shot relayer usin
 
 > Pair these with `SKILL.md` (workflow + decisions) and `schemas.md` (schemas + error catalog).
 
+**Arc mainnet (`5042`):** before any `getSmartAccountsEnvironment(5042)` / `toMetaMaskSmartAccount` call, register the kit environment by copying Arc Testnet (`5042002`) with `overrideDeployedEnvironment` — see **SKILL.md → Arc mainnet (5042): register Smart Accounts environment**. Snippets below that use Base Sepolia do not need it; Arc Path C / Path D clients do.
+
 ## Shared utilities
 
 ```ts
@@ -507,7 +509,8 @@ const redelegation = createDelegation({
 });
 const signedRedelegation = await sessionSmartAccount.signDelegation({ delegation: redelegation });
 
-const chainContext = encodeDelegations([rootDelegation, signedRedelegation]);
+// Leaf → root: first delegation's delegate must be relayer targetAddress
+const chainContext = encodeDelegations([signedRedelegation, rootDelegation]);
 const delegations = decodeDelegations(chainContext).map((d) => toRelayerJson(d));
 
 const sendParams = {
@@ -549,24 +552,32 @@ Notes:
 
 ## Example 0d — Agent wallet (`aw.mjs`) + public relayer (Path D)
 
-Path **D** from `SKILL.md`: the agent EOA lives in **agent-wallet** Foundry keystores. Use `aw` for all signing; use this skill’s JSON-RPC for estimate/send. Never print keystore passwords or private keys.
+Path **D** from `SKILL.md`: the agent EOA lives in **agent-wallet** encrypted keystores (`npm install` under `scripts/` — Foundry cast optional for this path). Use `aw` for signing; use this skill’s JSON-RPC for estimate/send. Never print keystore passwords or private keys.
 
 Shared setup (from skill root of **agent-wallet**):
 
 ```bash
+cd scripts && npm install   # once — pulls kit ^2.0.0, viem, ethers
 node scripts/aw.mjs doctor
-node scripts/aw.mjs address   # show user address only
+node scripts/aw.mjs create  # or address — show user address only
 ```
 
 ### D1 — Self-sponsored (agent creates root delegation to `targetAddress`)
 
 1. `relayer_getCapabilities` → `targetAddress`, `feeCollector`, USDC (or other accepted token).
-2. Optional first upgrade: `node scripts/aw.mjs auth7702 --rpc "$RPC" --chain-id "$CHAIN_ID"` → keep `authorization` for send.
-3. Write `delegation.json`:
+2. **First use on that chain:** upgrade the agent EOA to Stateless7702 and keep `authorization` for estimate/send:
+
+```bash
+# Arc mainnet example
+node scripts/aw.mjs auth7702 --rpc https://rpc.mainnet.arc.io --chain-id 5042
+# → { authorization: { address, chainId, nonce, r, s, yParity }, … }
+```
+
+3. Write `delegation.json` (`maxAmount` may be a decimal string — `aw` coerces to `bigint` for kit v2):
 
 ```json
 {
-  "chainId": 8453,
+  "chainId": 5042,
   "to": "0xRelayerTargetFromCapabilities…",
   "scope": {
     "type": "erc20TransferAmount",
@@ -578,17 +589,21 @@ node scripts/aw.mjs address   # show user address only
 ```
 
 4. Sign: `node scripts/aw.mjs delegation-sign --file ./delegation.json` → `signedDelegation`.
-5. Build fee + work `executions`, `permissionContext: [toRelayerJson(signedDelegation)]`, then estimate → send (same as Example 1b). Attach `authorizationList` from step 2 when needed.
+5. Build fee + work `executions`, `permissionContext: [toRelayerJson(signedDelegation)]`, then estimate → send with **`authorizationList: [authorization]`** on both calls when upgrading.
 
 ### D2 — Parent grant (e.g. CoinOperated) + `aw redelegate` (recommended for agents)
 
-Owner already granted a periodic ERC-20 permission **to the agent address** (CoinOperated deeplink / `wallet_requestExecutionPermissions` with `to: agent`). Agent redeems by **narrowing** to the relayer.
+Owner already granted a periodic ERC-20 permission **to the agent address**. Prefer redeeming to **pull USDC into the agent wallet**, then trade (LiFi, etc.) from the agent — see **coinoperated** skill. Redelegation only **narrows** to the relayer for this pull.
 
 ```bash
-# parent.json = signed MetaMask Delegation object (from decodeDelegations(permissionContext)[0]
-# or CoinOperated stored `delegation` JSON). Must include a real signature.
+# parent.json = CoinOperated GET /api/agent/delegations → write `delegation` STRING raw
+# (do not JSON.stringify again). Must include a real signature.
 
-# child-input.json — to MUST be capabilities.targetAddress; maxAmount = fee+work for THIS submit
+# First redeem on Arc: EIP-7702 auth (pending nonce; no executor:"self")
+node scripts/aw.mjs auth7702 --rpc https://rpc.mainnet.arc.io --chain-id 5042
+# save authorization from stdout for authorizationList
+
+# child-input.json — to MUST be capabilities.targetAddress; maxAmount = fee+pull for THIS submit
 cat > child-input.json <<'EOF'
 {
   "chainId": 5042,
@@ -613,10 +628,12 @@ import { encodeDelegations, decodeDelegations } from "@metamask/smart-accounts-k
 import { encodeFunctionData, erc20Abi } from "viem";
 // rpc, toRelayerJson, Estimate7710Result — see Shared utilities above
 
-const decimalChainId = "5042"; // Arc mainnet example — confirm via getCapabilities
+const decimalChainId = "5042"; // Arc mainnet
+const ARC_RPC = "https://rpc.mainnet.arc.io";
 const relayerUrl = "https://relayer.1shotapi.com/relayers";
 const rpcAt = <T>(method: string, params: unknown, id = 1) =>
   rpc<T>(method, params, id, relayerUrl);
+// aw registers Arc kit env; if you call getSmartAccountsEnvironment(5042) here, register first.
 
 const caps = await rpcAt<Record<string, {
   feeCollector: `0x${string}`;
@@ -626,20 +643,23 @@ const caps = await rpcAt<Record<string, {
 const { feeCollector, targetAddress, tokens } = caps[decimalChainId]!;
 const usdc = tokens.find((t) => t.symbol === "USDC")!;
 
-// parent + child from disk / CoinOperated API (already signed)
-const parent = parentDelegationFromApi; // signed Delegation
+const parent = parentDelegationFromApi; // signed Delegation (parsed once from API string)
 const child = signedRedelegationFromAw; // stdout of `aw redelegate`
+const authorization = authFromAw; // stdout of `aw auth7702` — omit after upgraded
 
 if (child.delegate.toLowerCase() !== targetAddress.toLowerCase()) {
   throw new Error("Redelegation must target relayer targetAddress");
 }
 
+// CRITICAL: leaf → root. First entry's delegate === targetAddress
 const permissionContext = decodeDelegations(
-  encodeDelegations([parent, child]),
+  encodeDelegations([child, parent]),
 ).map((d) => toRelayerJson(d));
 
 const feeAmount = 100_000n; // mock ≥ minFee; adjust after estimate
-const workAmount = 1_000_000n;
+const pullAmount = 1_000_000n; // USDC atoms to agent wallet
+const agentAddress = "0xAgentEoa…" as `0x${string}`;
+
 const feeTransfer = {
   target: usdc.address,
   value: "0",
@@ -649,25 +669,26 @@ const feeTransfer = {
     args: [feeCollector, feeAmount],
   }),
 };
-const workTransfer = {
+const pullToAgent = {
   target: usdc.address,
   value: "0",
   data: encodeFunctionData({
     abi: erc20Abi,
     functionName: "transfer",
-    args: ["0xDestination…", workAmount],
+    args: [agentAddress, pullAmount],
   }),
 };
 
 const sendParams = {
   chainId: decimalChainId,
+  // Required on first redeem for this EOA on this chain:
+  authorizationList: authorization ? [authorization] : undefined,
   transactions: [
     {
       permissionContext,
-      executions: [feeTransfer, workTransfer], // batch: fee + work, one permissionContext
+      executions: [feeTransfer, pullToAgent], // fee + fund agent; trade later from agent
     },
   ],
-  // authorizationList: [authFromAw] when agent EOA needs EIP-7702 upgrade on this chain
 };
 
 const estimate = await rpcAt<Estimate7710Result>(
@@ -681,14 +702,21 @@ const taskId = await rpcAt<string>("relayer_send7710Transaction", {
   ...sendParams,
   context: estimate.context,
   delegationSecret: process.env.APP_DELEGATION_SECRET, // one secret per app; reuse
-  memo: "agent-spend-1",
+  // CoinOperated Agent Activity (memo ≤ 256 chars):
+  destinationUrl: "https://coinoperated.finance/api/webhooks/relayer",
+  memo: JSON.stringify({
+    source: "coinoperated",
+    signerAddress: agentAddress,
+    nonce: process.env.CO_SIGNER_NONCE, // from SIWE verify/token signerNonce
+    justification: "Pull USDC to agent",
+  }),
 });
-console.log("submitted", taskId);
+console.log("submitted", taskId, "(rpc for auth was", ARC_RPC, ")");
 ```
 
 **Batching:** put every call for **one chain / one privilege chain** in `executions[]` under a single `transactions[]` entry (as above). For sponsor+worker patterns, use two `transactions[]` entries each with its own `permissionContext` (see Example 3).
 
-**Multichain:** repeat D2 per chain (capabilities + optional `auth7702` + `redelegate` per `chainId`), then:
+**Multichain:** repeat D2 per chain (capabilities + `auth7702` on first use + `redelegate` per `chainId`), then:
 
 ```ts
 const params = [arcParam, baseParam]; // each: { chainId, transactions, authorizationList? }
@@ -708,6 +736,7 @@ const taskIds = await rpcAt<string[]>("relayer_send7710TransactionMultichain",
 
 Notes:
 
+- **`permissionContext` order is leaf → root (`[child, parent]`)** — not `[parent, child]`.
 - Redelegation may only **narrow** the parent (MetaMask caveat stacking).
 - Prefer estimate-first; quote `context` TTL is ~30s.
 - `aw send` is unrelated — do not use it for relayer redeem.
