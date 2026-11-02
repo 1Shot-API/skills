@@ -99,7 +99,7 @@ type GetFeeDataResult = {
     name?: string;
   };
   rate: number; // exchange rate: native gas units → payment-token atoms
-  minFee: string; // floor fee in token atoms (≈ $0.01 worth)
+  minFee: string; // HUMAN DECIMAL floor (e.g. "0.01"), NOT atoms — ≈ $0.01 worth
   expiry: number; // unix seconds; quote unusable after this
   gasPrice: `0x${string}`; // current gas price in wei (hex)
   feeCollector: `0x${string}`;
@@ -111,6 +111,8 @@ type GetFeeDataResult = {
 ### Computing the fee amount
 
 ```ts
+import { parseUnits } from "viem";
+
 const nativeFeeWei = BigInt(feeData.gasPrice) * BigInt(estimatedGasUsed);
 // Convert to payment-token atoms; rate already accounts for token decimals
 const tokenAtoms = scaleNativeToToken(
@@ -118,17 +120,20 @@ const tokenAtoms = scaleNativeToToken(
   feeData.rate,
   feeData.token.decimals,
 );
-const feeAmount =
-  tokenAtoms < BigInt(feeData.minFee) ? BigInt(feeData.minFee) : tokenAtoms;
+// minFee is "0.01" (decimal) — never BigInt(feeData.minFee)
+const minFeeAtoms = parseUnits(feeData.minFee, feeData.token.decimals);
+const feeAmount = tokenAtoms < minFeeAtoms ? minFeeAtoms : tokenAtoms;
 ```
 
-**Always floor at `minFee`.** It represents $0.01 in the payment token; the relayer rejects payment below it with `4200 InsufficientPayment`.
+**Always floor at `minFee`.** It represents ≈ $0.01 in the payment token; the relayer rejects payment below it with `4200 InsufficientPayment`.
+
+**Units reminder:** `getFeeData.minFee` = human decimal string; `estimate.requiredPaymentAmount` = atom integer string (safe for `BigInt`).
 
 ### Quote lifetime
 
-Treat the quote as valid for `(expiry - now)` (**`quoteValidSeconds`**, currently **30 seconds**). Fetch fresh quotes between retries. Do not submit a stale `context` — send rejects expired quotes instead of underpaying later.
+Treat the quote as valid for `(expiry - now)` (**`quoteValidSeconds`**, currently **~30 seconds**). Fetch fresh quotes between retries. Do not submit a stale `context` — send rejects expired quotes instead of underpaying later. After a user-approved fee **cap**, re-estimate if the prior quote aged out and send only if the new fee ≤ cap.
 
-**Prefer `relayer_estimate7710Transaction`** when the signed bundle exists — estimate returns `requiredPaymentAmount` and signed `context` from a server-side 1Shot gas simulation.
+**Prefer `relayer_estimate7710Transaction`** when the signed bundle exists — estimate returns `requiredPaymentAmount` (atoms) and signed `context` from a server-side 1Shot gas simulation.
 
 ---
 
@@ -171,7 +176,7 @@ type Estimate7710TransactionResult = {
 
 ### Wiring to send
 
-Pass `result.context` as `params.context` on `relayer_send7710Transaction` to lock **gas price and TWAP `rate`** to this estimate (quote TTL is **`quoteValidSeconds`**, currently **30 seconds**). Invalid or expired `context` is rejected at send time (JSON-RPC `4204 Quote Expired` when expired) — the relayer does not silently drop a bad lock and re-price live. Job-time gas re-sims may differ by a few USDC micros after a fee-amount bump; the relayer accepts payments within a small shortfall tolerance (~100 USDC micros).
+Pass `result.context` as `params.context` on `relayer_send7710Transaction` to lock **chain, gas price, and TWAP `rate`** to this estimate (quote TTL is **`quoteValidSeconds`**, currently **30 seconds**). Invalid or expired `context` is rejected at send time (JSON-RPC `4204 Quote Expired` when expired; **`4217 Quote Chain Mismatch`** when the signed quote `chain` does not match `params.chainId`) — the relayer does not silently drop a bad lock and re-price live. For multichain, set each `params[i].context` from `contextByChainId[params[i].chainId]`; never reuse one chain's quote on another. Job-time gas re-sims may differ by a few USDC micros after a fee-amount bump; the relayer accepts payments within a small shortfall tolerance (~100 USDC micros).
 
 ---
 
@@ -337,6 +342,7 @@ Always handle `100`, `110`, `200`, `400`, `500` explicitly. Stop polling on any 
 | 4213   | Invalid Task ID            | If supplying `taskId`, must be 32-byte 0x-hex.                                                               |
 | 4214   | Duplicate Task ID          | Omit `taskId` (server generates) or use a fresh random 32 bytes.                                             |
 | 4216   | Delegation Secret Mismatch | Send your app’s `delegationSecret` (bound on first submit for that delegation), or omit only if never bound. |
+| 4217   | Quote Chain Mismatch       | `params.context` was signed for a different chain than `params.chainId`. Use the matching estimate/`getFeeData` quote for that chain (or `contextByChainId[chainId]`). |
 
 ---
 

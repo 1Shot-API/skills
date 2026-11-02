@@ -78,6 +78,8 @@ export type Estimate7710Result = {
 Prefer **`relayer_estimate7710Transaction`** when the signed bundle exists — the relayer simulates gas and returns `requiredPaymentAmount` plus signed `context`. Use the helper below only for rough quotes before the bundle is built.
 
 ```ts
+import { parseUnits } from "viem";
+
 export function computeFeeAmount(
   feeData: { gasPrice: `0x${string}`; rate: number; minFee: string; token: { decimals: number } },
   estimatedGasUsed: bigint,
@@ -87,12 +89,13 @@ export function computeFeeAmount(
   // Simple approach: do the float multiplication, then floor; for production, prefer fixed-point.
   const tokenAtomsFloat = Number(nativeFeeWei) * feeData.rate;
   const tokenAtoms = BigInt(Math.ceil(tokenAtomsFloat));
-  const minFee = BigInt(feeData.minFee);
-  return tokenAtoms < minFee ? minFee : tokenAtoms;
+  // getFeeData.minFee is a HUMAN DECIMAL (e.g. "0.01"), NOT atoms — never BigInt(minFee)
+  const minFeeAtoms = parseUnits(feeData.minFee, feeData.token.decimals);
+  return tokenAtoms < minFeeAtoms ? minFeeAtoms : tokenAtoms;
 }
 ```
 
-> For production, replace the float multiplication with a fixed-point conversion to avoid precision loss for large gas amounts.
+> Prefer `estimate.requiredPaymentAmount` (atom integer string — safe for `BigInt`) once the bundle exists. For production, replace the float multiplication with a fixed-point conversion to avoid precision loss for large gas amounts.
 
 ---
 
@@ -1194,6 +1197,7 @@ Key points:
 | -------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `@metamask/delegation-toolkit` not found / deprecated | Migrate to `@metamask/smart-accounts-kit`: main export for delegations, `/actions` for `erc7715ProviderActions`, `/utils` for `decodeDelegations`. |
 | `4204 Quote Expired`                               | Submitted >45s after estimate or `relayer_getFeeData`. Re-estimate and resubmit immediately. |
+| `4217 Quote Chain Mismatch`                        | `params.context` signed for a different chain than `params.chainId`. Use that chain's estimate/`contextByChainId` entry. |
 | `4200 Insufficient Payment`                        | Forgot to floor at `minFee` or under-estimated `gasUsed`; use `requiredPaymentAmount` from estimate. |
 | `estimate success: false` + mock payment message   | Include an ERC-20 `transfer` to `feeCollector` in executions (mock fee ≥ `minFee`). |
 | `estimate success: false` + minimum fee          | Increase mock fee amount to at least chain/token `minFee`. |

@@ -18,7 +18,7 @@ description: >-
 license: MIT
 metadata:
   author: 1Shot-API
-  version: "1.3.0"
+  version: "1.4.0"
   repository: https://github.com/1Shot-API/skills
 ---
 
@@ -178,19 +178,31 @@ Once the signed bundle exists, call the matching estimate method with the **same
 The relayer validates delegations, runs 1Shot gas simulation, and returns synchronously (no task is created):
 
 - `success` (boolean) — `false` when validation or simulation fails; read `error` in the result (not always a JSON-RPC error).
-- `requiredPaymentAmount` (string, token atoms) — fee to pay in the mock payment token, floored at chain/token `minFee`.
+- `requiredPaymentAmount` (string, **token atoms**) — fee to pay in the mock payment token, floored at chain/token min fee. Safe for `BigInt(...)`.
 - `gasUsed` — map of chain id → summed gas units (decimal strings).
 - `context` — signed price-lock quote for the first payment chain; pass as `params.context` on single-chain send.
 - `contextByChainId` — per-chain signed quotes; for multichain send, set each `params[i].context = contextByChainId[params[i].chainId]`.
 
+Each signed quote embeds the **chain** (and gasPrice/rate) it was issued for. On send, the relayer rejects a `context` whose signed chain does not match that param's `chainId` (**4217 QUOTE_CHAIN_MISMATCH**). Never reuse one chain's quote on another.
+
 **Production loop**:
 
-1. POST estimate with the current bundle (mock fee ≥ `minFee`).
-2. If `success === false`, fix the bundle from `error` (missing payment, below minFee, simulation revert, invalid delegation).
+1. POST estimate with the current bundle (mock fee ≥ floor — e.g. `parseUnits("0.01", decimals)` for USDC).
+2. If `success === false`, fix the bundle from `error` (missing payment, below min fee, simulation revert, invalid delegation).
 3. If `requiredPaymentAmount` differs from your mock fee, update the fee execution amount and delegation `maxAmount`, then **re-sign** the delegation.
-4. Immediately send with the `context` / `contextByChainId` from the estimate response to lock the quote (**30 seconds** TTL).
+4. Immediately send with the `context` / `contextByChainId` from the estimate response to lock the quote (**~30 seconds** TTL). Match each param's `context` to that param's `chainId`. If the user approved a **fee cap**, and the quote aged out before send, **re-estimate** and send only if the new fee is still ≤ that cap.
 
 This supersedes client-side `eth_estimateGas` + manual fee math when the full bundle is ready.
+
+### Units: `minFee` (decimal) vs `requiredPaymentAmount` (atoms)
+
+| Field | Method | Unit | Example (USDC, 6 decimals) | Safe for `BigInt(x)`? |
+|-------|--------|------|----------------------------|------------------------|
+| `minFee` | `relayer_getFeeData` | **Human decimal string** | `"0.01"` | **No** — use `parseUnits(minFee, decimals)` |
+| `requiredPaymentAmount` | `relayer_estimate7710Transaction*` | **Integer string of token atoms** | `"10000"` (= 0.01 USDC) | **Yes** |
+| Fee / work in `executions` and delegation `maxAmount` | your bundle | **atoms** (`bigint`) | `10000n` | n/a |
+
+Never do `BigInt(feeData.minFee)` when `minFee` is `"0.01"` — that throws. Prefer estimate’s `requiredPaymentAmount` for the final fee leg. For a mock floor before estimate, use `parseUnits("0.01", token.decimals)` (or `parseUnits(feeData.minFee, feeData.token.decimals)`).
 
 ### Step 2b (fallback) — `relayer_getFeeData`: rough quote before the bundle exists
 
@@ -198,16 +210,16 @@ Use when the bundle is **not** built yet — for example, browser permission UX 
 
 - `gasPrice` (hex wei) — current relayer gas price in native gas units.
 - `rate` (number) — exchange rate to convert native gas cost into the payment token amount.
-- `minFee` (string, in token atoms) — **the floor fee, equivalent to $0.01 in the payment token**.
-- `expiry` (unix seconds) — quote validity (**30 seconds** by default; treat anything past `expiry` as stale).
+- `minFee` (string, **human-readable decimal**, e.g. `"0.01"`) — floor ≈ $0.01 in the payment token. Convert with `parseUnits(minFee, token.decimals)` before comparing to atom amounts.
+- `expiry` (unix seconds) — quote validity (**~30 seconds** by default; treat anything past `expiry` as stale).
 - `context` (string) — signed price-lock context (prefer the `context` returned from estimate when the bundle exists).
 
 **Manual fee math** (when estimate is unavailable):
 
 1. Estimate `gasUsed` for the work transaction(s) (use `eth_estimateGas` or a known upper bound).
 2. `nativeFee = gasPrice * gasUsed` (wei).
-3. Convert to payment-token atoms using `rate`.
-4. **Floor**: `feeAmount = max(converted, minFee)`.
+3. Convert to payment-token **atoms** using `rate`.
+4. **Floor**: `feeAmount = max(converted, parseUnits(minFee, decimals))`.
 
 The delegation's caveat scope must allow at least `feeAmount` to be transferred to `feeCollector`. Under-paying causes `InsufficientPayment` (4200).
 
@@ -266,7 +278,9 @@ If polling is unavoidable, call `relayer_getStatus` with `{ id: <TaskId>, logs: 
 
 ## Decisions cheat sheet
 
-- **Quote fee how?**: when the signed bundle exists, prefer **`relayer_estimate7710Transaction`** (single-chain) or **`relayer_estimate7710TransactionMultichain`** (multichain) — the relayer simulates gas and returns `requiredPaymentAmount` plus signed `context`. Use **`relayer_getFeeData`** only for rough quotes before the bundle is built (e.g. browser permission UX) or when estimate is unavailable.
+- **Quote fee how?**: when the signed bundle exists, prefer **`relayer_estimate7710Transaction`** (single-chain) or **`relayer_estimate7710TransactionMultichain`** (multichain) — the relayer simulates gas and returns `requiredPaymentAmount` (**atoms**) plus signed `context`. Use **`relayer_getFeeData`** only for rough quotes before the bundle is built; its **`minFee` is a human decimal** (`"0.01"`), not atoms.
+- **Transient HTTP/network errors** (`ECONNRESET`, `fetch failed`, HTTP 502/503, timeouts): these are usually **client ↔ network** issues, not a JSON-RPC business error from the relayer. Retry estimate/send with backoff (2–3 attempts). If send may have succeeded, **do not re-send blindly** — poll `relayer_getStatus` with a saved `taskId` (or wait for webhook) before building a new submit.
+- **Working directory**: run agent-wallet as `node scripts/aw.mjs …` from the **agent-wallet skill root** (the directory that contains `scripts/`), or pass an absolute path to `aw.mjs`. Do not `cd scripts` and then `node scripts/aw.mjs` (path double-up).
 - **Unsigned estimate (quote before signing)**: on estimate only, set every delegation `signature` to `""`, `bytes32(0)` (`0x` + 64 zero hex digits), or the recommended 65-byte all-zero placeholder; the relayer injects estimate-only **DelegatorEstimateShim** **code** at each delegator via Geth `stateOverride` (including **EOAs not yet EIP-7702 upgraded** on chain). Real on-chain token balances and allowances still apply — not faked. For a **first-time EIP-7702 upgrade**, you may also send `authorizationList` with correct `address`, `chainId`, and `nonce` but placeholder **`r`/`s`** (32-byte zero hex) and **`yParity` `0`** — only when delegation signatures are placeholders; the relayer adds fixed auth gas to the quote (default **40100** gas) and does not forward invalid auth to simulation. **Send requires real delegation and authorization signatures** — placeholders are rejected on `relayer_send7710Transaction*`.
 - **Self-sponsored vs. sponsored**: if the same account pays the fee and executes the work, sign **one delegation** that scopes `feeAmount + workAmount` and bundle two `executions` (fee transfer + work). If a separate sponsor pays the fee, sign **two delegations** (one each from sponsor and delegator) and submit two `transactions[]` entries with their own `permissionContext`. The relayer merges them into a single `redeemDelegations` batch.
 - **`ScopeType` choice**: `ScopeType.Erc20TransferAmount` is simplest and works for fee + work transfers. Use `ScopeType.FunctionCall` (token + selector) when you need broader function coverage in one batch — the `Erc20TransferAmount` enforcer can revert with `CaveatEnforcer:invalid-call-type` for some batched call patterns.
@@ -424,6 +438,16 @@ Use when a **coding agent** holds an EOA in Foundry keystores (`aw.mjs`) and mus
 9. **Multichain:** build one param per chain (each with its own redelegation/`authorizationList` as needed); use `relayer_estimate7710TransactionMultichain` / `relayer_send7710TransactionMultichain` and set each `params[i].context = contextByChainId[chainId]`.
 
 Do **not** use `aw send` for gas-abstracted redeem — that broadcasts a raw EOA tx. Relayer redeem is always `relayer_*` JSON-RPC after `aw` signing.
+
+### Foundry `cast` vs agent-wallet + this skill
+
+| Goal | Tool |
+|------|------|
+| Create keystore, SIWE `personal_sign`, EIP-7702 auth, sign/redelegate EIP-7710 | **agent-wallet** `aw.mjs` (Node + ethers/viem; **cast optional**) |
+| Gas-abstracted redeem (fee in USDC, no native gas on the agent) | **This skill** — `relayer_estimate*` / `relayer_send*` |
+| Raw EOA broadcast that spends native gas (`cast send` / `aw send`) | Foundry **cast** only — **not** the grant/relayer path |
+
+End-to-end agent pattern: `aw auth7702` + `aw redelegate` → assemble `permissionContext` + `executions` → estimate (retry on `ECONNRESET`) → send with `context`. Worked example: [Example 0d](references/examples.md). CoinOperated wiring + direct vs pull paths: skill **coinoperated** + [references/spend-paths.md](../coinoperated/references/spend-paths.md).
 
 ## Composing with `webauthn-prf-wallet` for a fully non-custodial app
 

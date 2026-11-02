@@ -15,13 +15,13 @@ description: >-
 license: MIT
 metadata:
   author: 1Shot-API
-  version: "0.3.0"
+  version: "0.4.0"
   repository: https://github.com/1Shot-API/skills
 ---
 
 # CoinOperated (agent coordinator)
 
-Orchestrate **linking a coding-agent wallet** to [CoinOperated](https://coinoperated.finance), authenticating to the REST API, and **pulling owner USDC into the agent wallet** via the 1Shot public relayer. CoinOperated never holds agent private keys. The human owner confirms the agent address and signs a limited Arc USDC spending permission in the browser.
+Orchestrate **linking a coding-agent wallet** to [CoinOperated](https://coinoperated.finance), authenticating to the REST API, and **spending under the owner grant** via the 1Shot public relayer (direct pay **or** pull-to-agent). CoinOperated never holds agent private keys. The human owner confirms the agent address and signs a limited Arc USDC spending permission in the browser.
 
 Humans usually paste a prompt that points here (or at the product mirror):
 
@@ -50,14 +50,24 @@ cd skills/agent-wallet/scripts && npm install
 
 Skill roots after clone: `skills/coinoperated`, `skills/agent-wallet`, `skills/public-relayer`. Human overview: [https://coinoperated.finance/guides/agents](https://coinoperated.finance/guides/agents).
 
-## Architecture: pull funds, then trade with the agent wallet
+## Spend paths (pick by user intent)
 
-The owner grant is an ERC-20 spending permission **to the agent address**. Treat it as a **funding faucet**, not as the vehicle for complex work:
+Full detail: [references/spend-paths.md](./references/spend-paths.md). Runnable example: [scripts/arc-usdc-transfer.mjs](./scripts/arc-usdc-transfer.mjs).
 
-1. **Redeem the grant** through the relayer to move Arc USDC from the owner → **the agent’s own address** (plus the relayer fee leg).
-2. **Trade / route / LiFi / multi-hop logic runs from the agent wallet** with those funds — outside the owner’s caveat scope.
+| User intent | Path | `executions` work leg |
+|-------------|------|------------------------|
+| “Send / pay / transfer $X to `0x…`” | **A — Direct** (one redeem) | ERC-20 `transfer(recipient, amount)` |
+| Hold funds / LiFi / multi-hop / trading | **B — Pull then trade** | ERC-20 `transfer(agent, amount)`; trade later from agent |
 
-Do **not** try to encode LiFi routes, bridges, or multi-call trading under the owner delegation. Redelegations may only **narrow** the parent; putting complex calldata in the redeem usually fails caveat checks. Pull USDC to yourself first, then operate as a normal self-custodied agent EOA.
+Both paths: fee leg → `feeCollector`, redelegate to relayer `targetAddress`, `permissionContext = [child, parent]`, `auth7702` on first use.
+
+For **complex** work, do **not** encode LiFi under the owner grant — Path B only. For a simple payment the user named a recipient for, use Path A (do not invent an extra pull hop).
+
+```bash
+# From coinoperated/scripts (sibling agent-wallet installed + npm install)
+node arc-usdc-transfer.mjs --parent ./parent.json --to 0xRecipient --amount 1 --max-fee 0.05
+node arc-usdc-transfer.mjs --parent ./parent.json --amount 5   # pull to agent
+```
 
 ## Phase 1 — Local wallet (agent-wallet)
 
@@ -78,6 +88,16 @@ Do **not** try to encode LiFi routes, bridges, or multi-call trading under the o
 2. Ask the user to open the link while signed into CoinOperated, **confirm** adding the address as an additional signer, and **approve** a spending delegation in their wallet UI.
 
 3. **Stop and wait** until the user says they are ready. Do not poll CoinOperated for completion in this skill version.
+
+### Prepare while waiting (no funds moved)
+
+Use idle time for **read-only** setup — do **not** estimate/send or move USDC until the user asks to spend:
+
+1. Ensure `agent-wallet/scripts` has `npm install` (`doctor` → `depsOk`).
+2. Cache `relayer_getCapabilities(["5042"])` → `targetAddress`, `feeCollector`, USDC.
+3. After they confirm the link: SIWE (Phase 3), then `GET /api/agent/delegations` → write `parent.json`.
+4. Optionally check agent code on Arc; plan `authorizationList` if not yet upgraded.
+5. Never redeem “just because setup finished.”
 
 ## Phase 3 — SIWE → Bearer → API
 
@@ -107,9 +127,9 @@ node -e "const r=JSON.parse(require('fs').readFileSync(0,'utf8')); const d=r.res
 - If you `JSON.stringify(row.delegation)` when it is already a string, `aw redelegate` rejects the double-encoded parent.
 - `permissionContext` (when present) is typically hex / encoded chain data — prefer the `delegation` string for `parent.json`.
 
-## Phase 4 — Pull USDC via public-relayer (Path D2), then act
+## Phase 4 — Spend via public-relayer (Path D2)
 
-Follow skill **public-relayer** Path **D2** and [Example 0d](../public-relayer/references/examples.md). Summary for CoinOperated:
+Follow skill **public-relayer** Path **D2**, [Example 0d](../public-relayer/references/examples.md), and [references/spend-paths.md](./references/spend-paths.md). Prefer the runnable script when the ask is a simple Arc USDC transfer.
 
 ### Chain / RPC constants (Arc mainnet)
 
@@ -123,43 +143,27 @@ Follow skill **public-relayer** Path **D2** and [Example 0d](../public-relayer/r
 
 `GET /api/chains` may not list the RPC URL — use the table above for Arc.
 
+**cwd:** run `node scripts/aw.mjs …` from the **agent-wallet skill root** (folder that contains `scripts/`), not from inside `scripts/`.
+
 ### First redeem on a chain: EIP-7702 upgrade (required)
 
-The agent EOA must become a MetaMask **Stateless7702** smart account on Arc before (or as part of) the first redeem. Sign auth with agent-wallet, then pass it on **both** estimate and send:
-
 ```bash
+# from agent-wallet skill root
 node scripts/aw.mjs auth7702 --rpc https://rpc.mainnet.arc.io --chain-id 5042
-# → { authorization: { address, chainId, nonce, r, s, yParity }, contractAddress, … }
 ```
 
-```ts
-const sendParams = {
-  chainId: "5042",
-  authorizationList: [authorization], // from aw auth7702 — omit on later txs once upgraded
-  transactions: [{ permissionContext, executions }],
-  // …
-};
-```
+Pass `authorizationList: [authorization]` on **estimate and send**. Stateless7702 impl (all CREATE2 chains): `0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B`. Do **not** use viem `executor: "self"`.
 
-`aw auth7702` uses the account’s **current pending nonce** (relayer sends the outer tx). Do **not** use viem `executor: "self"` — that signs nonce+1 and breaks relayer redemption. Details: **agent-wallet** / **public-relayer**.
+### Shared redeem steps
 
-### Spend steps (funding pull)
-
-1. `relayer_getCapabilities` for `"5042"` → **`targetAddress`**, **`feeCollector`**, USDC token.
-2. Write `parent.json` from `GET /api/agent/delegations` as above (raw delegation string).
-3. **First use on Arc:** `auth7702` (see above) and keep `authorization` for `authorizationList`.
-4. Child input: `to: targetAddress`, `erc20TransferAmount` ≥ **this** fee + pull amount, fresh `salt`. Then:
-
-   ```bash
-   node scripts/aw.mjs redelegate --parent ./parent.json --file ./child-input.json
-   ```
-
-5. Build `permissionContext` in **leaf-to-root** order: **`[child, parent]`** (first entry’s `delegate` must be the relayer `targetAddress`). Root-first `[parent, child]` fails with *First delegation's delegate must be the relayer Target wallet*.
-6. `executions[]` for this redeem should be:
-   - ERC-20 `transfer` of the **fee** → `feeCollector`
-   - ERC-20 `transfer` of the **pull amount** → **agent address** (your funding)
-7. Estimate → send with price-lock `context`, app **`delegationSecret`**, and Agent Activity fields below.
-8. After USDC lands in the agent wallet, run LiFi / swaps / other logic **from the agent wallet** (separate txs; not under the owner grant).
+1. Capabilities → `targetAddress`, `feeCollector`, USDC.
+2. `parent.json` from API (raw string).
+3. First use: `auth7702` → keep `authorization`.
+4. `aw redelegate` with child `to: targetAddress`, `maxAmount` ≥ fee + work (decimal atom strings OK — `aw` coerces to `bigint`).
+5. `permissionContext = [child, parent]` (leaf first).
+6. `executions[]`: fee → `feeCollector`; work → **recipient** (Path A) or **agent** (Path B).
+7. Estimate (retry on `ECONNRESET` / fetch failures) → if fee changed, re-sign child → send with `context` within ~30s. If user set a fee cap, re-quote after expiry and send only if still ≤ cap. If send may have landed, poll `relayer_getStatus` — do not double-submit.
+8. **Units:** `estimate.requiredPaymentAmount` = **atoms** (`BigInt` OK). `getFeeData.minFee` = human **decimal** (`"0.01"`) — use `parseUnits`, never `BigInt(minFee)`.
 
 ### Agent Activity: `destinationUrl` + `memo` JSON
 
@@ -188,6 +192,8 @@ Do **not** use `aw send` for the grant redeem — that broadcasts a raw EOA tx a
 
 - [references/deeplinks.md](./references/deeplinks.md)
 - [references/siwe-agent.md](./references/siwe-agent.md)
+- [references/spend-paths.md](./references/spend-paths.md) — direct pay vs pull-then-trade
+- [scripts/arc-usdc-transfer.mjs](./scripts/arc-usdc-transfer.mjs) — tested Path D2 example CLI
 - Skill **agent-wallet** — local EOA create / `sign-personal` / `auth7702` / `redelegate`
-- Skill **public-relayer** — `relayer_*` estimate/send, Path D, Example 0d (leaf-to-root chains + `authorizationList`)
+- Skill **public-relayer** — `relayer_*` estimate/send, Path D, fee units, retries
 - Skill **1shot-wallet** — embedded wallet Host Layer (owner UI, not agent EOA)
