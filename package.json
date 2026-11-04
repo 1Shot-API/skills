@@ -3,7 +3,7 @@
   "private": true,
   "description": "1Shot API Agent Skills — installable guides for coding agents",
   "scripts": {
-    "skills:install": "npx skills add . --skill '*' -g -a cursor -y",
+    "skills:install": "npx skills add . --skill '*' -g -a claude-code -y",
     "skills:update": "npx skills update -g -y"
   }
 }

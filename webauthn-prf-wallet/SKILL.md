@@ -15,7 +15,7 @@ A reusable pattern for deriving an Ethereum private key from a user's passkey en
 ## Install this skill (consumer / global)
 
 ```bash
-npx skills add 1Shot-API/skills/webauthn-prf-wallet -g -a cursor -y
+npx skills add 1Shot-API/skills/webauthn-prf-wallet -g -a claude-code -y
 ```
 
 

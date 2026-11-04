@@ -24,7 +24,7 @@ Teach an agent how to embed the **1Shot Wallet** Branding Layer from a Host Laye
 ## Install this skill (consumer / global)
 
 ```bash
-npx skills add 1Shot-API/skills/1shot-wallet -g -a cursor -y
+npx skills add 1Shot-API/skills/1shot-wallet -g -a claude-code -y
 ```
 
 ```
@@ -471,7 +471,7 @@ Returns `{ upgraded: boolean, codeAddress?: EVMContractAddress, error?: string }
 
 ## Custom RPC — `bridge`
 
-Opens the CCTP USDC bridge (Circle Forwarding Service). **EVM source** burns via TokenMessengerV2 + the 1Shot relayer (gasless USDC fee). **Solana source** burns via Kit/Alchemy (user pays SOL; no relayer fee UI). Locked wallet → error. Cancel before success → `OwsUserRejectedError`. Execute failure → thrown error. Flyout closes when the RPC settles (`requestDisplay` / `hide`). Omit `sourceChainId` to use the session chain.
+Opens the CCTP USDC bridge (Circle Forwarding Service). **EVM source** burns via TokenMessengerV2 + the 1Shot relayer (gasless USDC fee). **Solana source** burns via Kit/Alchemy (user pays SOL; no relayer fee UI). Locked wallet → error. Cancel before success → `OwsUserRejectedError`. Execute failure → thrown error. Flyout stays open through burn + Iris mint polling; host `bridge` RPC hides only when the modal settles (`Done` / cancel via `requestDisplay` / `hide`). EVM → Solana to this wallet’s Solana address auto-tracks dest USDC. Omit `sourceChainId` to use the session chain.
 
 When `amount`, `destinationChainId`, and `speed` are all provided, the wallet skips the setup form, auto-quotes, and shows the confirmation screen only (secondary action is **Cancel**). Partial params open setup with those values as defaults.
 

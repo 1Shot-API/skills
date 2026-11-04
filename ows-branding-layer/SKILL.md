@@ -24,9 +24,9 @@ When a local clone of [open-wallet](https://github.com/1Shot-API/open-wallet) is
 ## Install this skill (consumer / global)
 
 ```bash
-npx skills add 1Shot-API/skills/ows-branding-layer -g -a cursor -y
-# or: npx skills add https://github.com/1Shot-API/skills --skill ows-branding-layer -g -a cursor -y
-# or from a sibling clone: npx skills add ../skills --skill ows-branding-layer -g -a cursor -y
+npx skills add 1Shot-API/skills/ows-branding-layer -g -a claude-code -y
+# or: npx skills add https://github.com/1Shot-API/skills --skill ows-branding-layer -g -a claude-code -y
+# or from a sibling clone: npx skills add ../skills --skill ows-branding-layer -g -a claude-code -y
 ```
 
 Then invoke `/ows-branding-layer` or ask to build a branding wallet.

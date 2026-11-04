@@ -29,7 +29,7 @@ This skill teaches a client-side coding agent how to integrate with the **1Shot 
 ## Install this skill (consumer / global)
 
 ```bash
-npx skills add 1Shot-API/skills/public-relayer -g -a cursor -y
+npx skills add 1Shot-API/skills/public-relayer -g -a claude-code -y
 ```
 
 

@@ -15,7 +15,7 @@ Use this skill when building a TypeScript project on top of the 1Shot API Node S
 ## Install this skill (consumer / global)
 
 ```bash
-npx skills add 1Shot-API/skills/1shot-api -g -a cursor -y
+npx skills add 1Shot-API/skills/1shot-api -g -a claude-code -y
 ```
 
 ## Quick Start
@@ -35,7 +35,22 @@ npx skills add 1Shot-API/skills/1shot-api -g -a cursor -y
 
 1Shot API provides an MCP server for directly configuring the developer's 1Shot API account. **Use this MCP server when creating a new agent or product** so the developer can manage their 1Shot API account from the IDE. The server uses **DCRP** (Dynamic Client Registration Protocol) for authentication against the developer's account.
 
-Add the following to the project's MCP configuration (e.g. Cursor MCP settings):
+Add it to the project's MCP configuration.
+
+**Claude Code** (`.mcp.json` at the project root; OAuth is handled by `/mcp` on first use):
+
+```json
+{
+  "mcpServers": {
+    "1Shot API": {
+      "type": "http",
+      "url": "https://mcp.1shotapi.com/mcp"
+    }
+  }
+}
+```
+
+**Cursor** (`.cursor/mcp.json`):
 
 ```json
 {

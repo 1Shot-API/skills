@@ -23,23 +23,23 @@ metadata:
 
 Orchestrate **linking a coding-agent wallet** to [CoinOperated](https://coinoperated.finance), authenticating to the REST API, and **spending under the owner grant** via the 1Shot public relayer (direct pay **or** pull-to-agent). CoinOperated never holds agent private keys. The human owner confirms the agent address and signs a limited Arc USDC spending permission in the browser.
 
-Humans usually paste a prompt that points here (or at the product mirror):
+Humans usually paste a prompt that points here:
 
 ```text
-Follow https://coinoperated.finance/agents/skill.md to set up a CoinOperated agent wallet and link it to my account.
+Follow https://raw.githubusercontent.com/1Shot-API/skills/main/coinoperated/SKILL.md to set up a CoinOperated agent wallet and link it to my account.
 ```
 
 ## Install companion skills
 
-**Cursor (global):**
+**Claude Code / Cursor (user-level, `~/.claude/skills` is read by both):**
 
 ```bash
-npx skills add 1Shot-API/skills/coinoperated -g -a cursor -y
-npx skills add 1Shot-API/skills/agent-wallet -g -a cursor -y
-npx skills add 1Shot-API/skills/public-relayer -g -a cursor -y
+npx skills add 1Shot-API/skills/coinoperated -g -a claude-code -y
+npx skills add 1Shot-API/skills/agent-wallet -g -a claude-code -y
+npx skills add 1Shot-API/skills/public-relayer -g -a claude-code -y
 ```
 
-**Any agent / cloud sandbox (no Cursor):**
+**Any agent / cloud sandbox (no `skills` CLI):**
 
 ```bash
 git clone --depth 1 https://github.com/1Shot-API/skills.git

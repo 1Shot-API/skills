@@ -56,15 +56,19 @@ function findAw() {
   if (env && fs.existsSync(env)) return env;
   const sibling = path.resolve(__dirname, "../../agent-wallet/scripts/aw.mjs");
   if (fs.existsSync(sibling)) return sibling;
-  const cursor = path.join(
-    process.env.USERPROFILE || process.env.HOME || "",
-    ".cursor",
-    "skills",
-    "agent-wallet",
-    "scripts",
-    "aw.mjs",
-  );
-  if (fs.existsSync(cursor)) return cursor;
+  // User-level installs (`npx skills add ... -g -a claude-code|cursor`).
+  const home = process.env.USERPROFILE || process.env.HOME || "";
+  for (const agentDir of [".claude", ".cursor"]) {
+    const installed = path.join(
+      home,
+      agentDir,
+      "skills",
+      "agent-wallet",
+      "scripts",
+      "aw.mjs",
+    );
+    if (fs.existsSync(installed)) return installed;
+  }
   die("agent-wallet aw.mjs not found. Set AGENT_WALLET_AW or install sibling skill.");
 }
 
