@@ -29,11 +29,11 @@ Product-agnostic skill for coding agents that need a **local EOA** and optional 
 
 ## Install this skill
 
-**Cursor:**
+**Claude Code / Cursor (user-level, `~/.claude/skills` is read by both):**
 
 ```bash
-npx skills add 1Shot-API/skills/agent-wallet -g -a cursor -y
-cd ~/.cursor/skills/agent-wallet/scripts && npm install
+npx skills add 1Shot-API/skills/agent-wallet -g -a claude-code -y
+cd ~/.claude/skills/agent-wallet/scripts && npm install
 ```
 
 **Any agent / cloud sandbox:**

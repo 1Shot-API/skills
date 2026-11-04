@@ -16,6 +16,6 @@ node arc-usdc-transfer.mjs --parent ./parent.json --amount 5
 ```
 
 Working directory: this `scripts/` folder (or any cwd if `--parent` is absolute).  
-`aw.mjs` is resolved from `../../agent-wallet/scripts/aw.mjs` or `AGENT_WALLET_AW`.
+`aw.mjs` is resolved from `AGENT_WALLET_AW`, then the sibling `../../agent-wallet/scripts/aw.mjs`, then the user-level installs `~/.claude/skills/agent-wallet/scripts/aw.mjs` and `~/.cursor/skills/agent-wallet/scripts/aw.mjs`.
 
 See [../references/spend-paths.md](../references/spend-paths.md) for when to use direct vs pull.

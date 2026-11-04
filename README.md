@@ -1,23 +1,25 @@
 # skills
 
-A collection of Agent Skills published by [1Shot API](https://1shotapi.com/) for coding agents (Cursor, Claude, etc.) to build onchain applications. Each skill lives in its own folder and can be installed independently.
+A collection of Agent Skills published by [1Shot API](https://1shotapi.com/) for coding agents (Claude Code, Cursor, etc.) to build onchain applications. Each skill lives in its own folder and can be installed independently.
 
 **This repository is the canonical source** for first-party 1Shot skills. Product repos (oneshot, relayer, clients, embedded-wallet, etc.) do not publish or project-install these skills — developers install them globally.
 
 ## Installing skills
 
-Install an individual skill with [`skills`](https://www.npmjs.com/package/skills) (global Cursor scope recommended):
+Install an individual skill with [`skills`](https://www.npmjs.com/package/skills) at user level. `-a claude-code` installs into `~/.claude/skills`, which both Claude Code and Cursor read, so one install serves both editors:
 
 ```bash
-npx skills add 1Shot-API/skills/<skill-name> -g -a cursor -y
+npx skills add 1Shot-API/skills/<skill-name> -g -a claude-code -y
 ```
 
 From a local clone of this repo (picks up unpushed edits):
 
 ```bash
 npm run skills:install
-# or: npx skills add . --skill '*' -g -a cursor -y
+# or: npx skills add . --skill '*' -g -a claude-code -y
 ```
+
+If you previously installed these into `~/.cursor/skills` (`-a cursor`), remove those copies so Cursor does not load each skill twice.
 
 To update all globally installed skills after new releases:
 
@@ -37,14 +39,14 @@ npx skills add 1Shot-API/skills -l
 
 | Skill | Install |
 |-------|---------|
-| [1shot-api](./1shot-api/) | `npx skills add 1Shot-API/skills/1shot-api -g -a cursor -y` |
-| [1shot-wallet](./1shot-wallet/) | `npx skills add 1Shot-API/skills/1shot-wallet -g -a cursor -y` |
-| [public-relayer](./public-relayer/) | `npx skills add 1Shot-API/skills/public-relayer -g -a cursor -y` |
-| [ows-branding-layer](./ows-branding-layer/) | `npx skills add 1Shot-API/skills/ows-branding-layer -g -a cursor -y` |
-| [webauthn-prf-wallet](./webauthn-prf-wallet/) | `npx skills add 1Shot-API/skills/webauthn-prf-wallet -g -a cursor -y` |
-| [agent-wallet](./agent-wallet/) | `npx skills add 1Shot-API/skills/agent-wallet -g -a cursor -y` |
-| [coinoperated](./coinoperated/) | `npx skills add 1Shot-API/skills/coinoperated -g -a cursor -y` |
-| [unit-tests](./unit-tests/) | `npx skills add 1Shot-API/skills/unit-tests -g -a cursor -y` |
+| [1shot-api](./1shot-api/) | `npx skills add 1Shot-API/skills/1shot-api -g -a claude-code -y` |
+| [1shot-wallet](./1shot-wallet/) | `npx skills add 1Shot-API/skills/1shot-wallet -g -a claude-code -y` |
+| [public-relayer](./public-relayer/) | `npx skills add 1Shot-API/skills/public-relayer -g -a claude-code -y` |
+| [ows-branding-layer](./ows-branding-layer/) | `npx skills add 1Shot-API/skills/ows-branding-layer -g -a claude-code -y` |
+| [webauthn-prf-wallet](./webauthn-prf-wallet/) | `npx skills add 1Shot-API/skills/webauthn-prf-wallet -g -a claude-code -y` |
+| [agent-wallet](./agent-wallet/) | `npx skills add 1Shot-API/skills/agent-wallet -g -a claude-code -y` |
+| [coinoperated](./coinoperated/) | `npx skills add 1Shot-API/skills/coinoperated -g -a claude-code -y` |
+| [unit-tests](./unit-tests/) | `npx skills add 1Shot-API/skills/unit-tests -g -a claude-code -y` |
 
 ### `1shot-api`
 
@@ -89,7 +91,7 @@ npx skills add 1Shot-API/skills -l
 **CoinOperated** also publishes a [well-known discovery index](https://agentskills.io/home) so agents can find the product skill from the site origin:
 
 ```bash
-npx skills add https://coinoperated.finance --skill coinoperated -g -a cursor -y
+npx skills add https://coinoperated.finance --skill coinoperated -g -a claude-code -y
 # index: https://coinoperated.finance/.well-known/agent-skills/index.json
 ```
 

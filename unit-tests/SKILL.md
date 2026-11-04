@@ -22,7 +22,7 @@ Follow this structure so tests stay readable, explicit, and easy to maintain. Re
 ## Install this skill (consumer / global)
 
 ```bash
-npx skills add 1Shot-API/skills/unit-tests -g -a cursor -y
+npx skills add 1Shot-API/skills/unit-tests -g -a claude-code -y
 ```
 
 ## When to use this skill

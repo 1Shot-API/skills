@@ -2,10 +2,10 @@
 
 Agent skill: local EOA via Foundry encrypted keystores + non-interactive Node CLI (`scripts/aw.mjs`). Sign messages/txs and build EIP-7710 delegations without printing private keys into chat.
 
-## Install (Cursor / agentskills)
+## Install (Claude Code / Cursor via the `skills` CLI)
 
 ```bash
-npx skills add 1Shot-API/skills/agent-wallet -g -a cursor -y
+npx skills add 1Shot-API/skills/agent-wallet -g -a claude-code -y
 ```
 
 Then:
