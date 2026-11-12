@@ -48,7 +48,7 @@ const { events } = await client.webhooks.getEvents();
 
 ## 4.2 Webhook triggers
 
-Triggers bind an endpoint to one or more event names; optionally restrict by contract method IDs.
+Triggers bind an endpoint to one or more event names; optionally restrict by contract method IDs. On Solana, `contractMethodIds` takes Solana Instruction or Solana Mint IDs (see [solana.md](solana.md)).
 
 **List webhook triggers**
 
@@ -162,6 +162,13 @@ const { response, page, pageSize, totalResults } =
   });
 // response[].id, response[].eventName, response[].content, response[].status
 ```
+
+`content` is the JSON payload. For the transaction events (`TransactionExecutionSubmitted`, `TransactionExecutionSuccess`, `TransactionExecutionFailure`) its `data` holds `transactionId`, `contractMethodIds`, `chainId`, `transactionReceipt`, `logs`, `transactionMemo`, `chainTechnology` and `solana`:
+
+- EVM (`chainTechnology: 0`): `transactionReceipt` and `logs` are set and `solana` is `null`.
+- Solana (`chainTechnology: 1`): `transactionReceipt` is `null`, `logs` is empty, and `solana` holds `{ signature, slot, blockTime, feeLamports, computeUnitsConsumed, confirmationStatus, err, programLogs }`.
+
+Branch on `chainTechnology` rather than on the chain id when handling these payloads.
 
 **List delivery attempts for a webhook**
 

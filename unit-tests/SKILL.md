@@ -8,7 +8,7 @@ description: >-
 license: MIT
 metadata:
   author: 1Shot-API
-  version: "1.0.0"
+  version: "1.0.1"
   repository: https://github.com/1Shot-API/skills
 ---
 
@@ -44,7 +44,7 @@ At the top of the test file (after imports), declare **named constants** used ac
 - **Stable IDs and branded types** (`UserId`, `BusinessId`, addresses) so every test uses the same fake identity unless a case needs a different value.
 - **Shared primitives** reused in mocks (e.g. JWT strings, chain enum) when they are not test-specific.
 
-Use real or fake values deliberately: prefer values that match production shape (UUIDs, `0x`-prefixed addresses) so type constructors and validators behave like production.
+Use real or fake values deliberately: prefer values that match production shape (UUIDs, `0x`-prefixed EVM addresses, base58 Solana addresses and signatures) so type constructors and validators behave like production.
 
 ## 2. `ClassUnderTestMocks` class
 

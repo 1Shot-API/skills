@@ -50,7 +50,7 @@ npx skills add 1Shot-API/skills -l
 
 ### `1shot-api`
 
-Guides a coding agent in building a TypeScript project that leverages the [1Shot API Node SDK](https://github.com/1Shot-API/1Shot-API-SDK/tree/main/clients/node) for onchain reads, transaction management, delegations, and payments.
+Guides a coding agent in building a TypeScript project that leverages the [1Shot API Node SDK](https://github.com/1Shot-API/1Shot-API-SDK/tree/main/clients/node) for onchain reads, transaction management, delegations, and payments on EVM chains, plus Solana programs, instructions and SPL token mints.
 
 ### `1shot-wallet`
 

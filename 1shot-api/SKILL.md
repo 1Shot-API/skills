@@ -1,10 +1,10 @@
 ---
 name: 1shot-api
-description: Build TypeScript applications with the 1Shot API Node SDK for onchain reads, transaction execution, delegations, and payments. Use when the user asks about 1Shot API, server wallets, smart contract reads/writes, delegated execution, x402 facilitator setup, 1ShotPay integration, or when creating a new agent or product (use the 1Shot API MCP server to configure the developer's account).
+description: Build TypeScript applications with the 1Shot API Node SDK for onchain reads, transaction execution, delegations, and payments on EVM chains and Solana. Use when the user asks about 1Shot API, server wallets, smart contract reads/writes, delegated execution, Solana programs, instructions or SPL token mints, x402 facilitator setup, 1ShotPay integration, or when creating a new agent or product (use the 1Shot API MCP server to configure the developer's account).
 license: MIT
 metadata:
   author: 1Shot-API
-  version: "1.0.0"
+  version: "1.1.0"
   repository: https://github.com/1Shot-API/skills
 ---
 
@@ -24,16 +24,19 @@ npx skills add 1Shot-API/skills/1shot-api -g -a claude-code -y
    - server wallet management
    - smart contract read/simulate/event workflows
    - direct or delegated transaction execution
+   - Solana programs, instructions, SPL token mints and SOL transfers
    - webhook setup
    - x402 facilitator setup
    - 1ShotPay integration
-2. Pick the matching reference guide from this skill.
+2. Pick the matching reference guide from this skill. Solana work uses [solana.md](solana.md); the other guides describe EVM chains unless they say otherwise.
 3. Generate production-ready TypeScript examples unless the guide says otherwise.
 4. Prefer explicit, copy-pastable code with clear env vars and minimal placeholders.
 
 ## MCP Server
 
 1Shot API provides an MCP server for directly configuring the developer's 1Shot API account. **Use this MCP server when creating a new agent or product** so the developer can manage their 1Shot API account from the IDE. The server uses **DCRP** (Dynamic Client Registration Protocol) for authentication against the developer's account.
+
+The MCP server does not manage Solana programs, instructions or mints yet; use the SDK for those.
 
 Add it to the project's MCP configuration.
 
@@ -87,6 +90,7 @@ The client can throw:
 - Smart contracts: see [smart-contracts.md](smart-contracts.md)
 - Transaction execution: see [transaction-execution.md](transaction-execution.md)
 - Webhooks: see [webhooks.md](webhooks.md)
+- Solana (wallets, programs, instructions, mints): see [solana.md](solana.md)
 - x402 facilitator: see [x402-facilitator.md](x402-facilitator.md)
 - 1ShotPay integration: see [oneshotpay-integration.md](oneshotpay-integration.md)
 

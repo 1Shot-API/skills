@@ -1,6 +1,6 @@
 # Smart Contracts
 
-Use this guide when the user asks for Smart Contract interactions with the 1Shot Node SDK.
+Use this guide when the user asks for Smart Contract interactions with the 1Shot Node SDK. Smart contracts, contract methods and contract events are EVM-only; for Solana programs see [solana.md](solana.md).
 
 ## Topics Covered
 

@@ -1,6 +1,6 @@
 # Transaction Execution
 
-Use this guide when the user asks for transaction execution with the 1Shot Node SDK.
+Use this guide when the user asks for transaction execution with the 1Shot Node SDK on EVM chains. Solana executions go through instructions and mints instead of contract methods; see [solana.md](solana.md).
 
 Leverage the memo field when implementing transaction executions so that the transaction history is semantically searchable and the account owner will know why transactions where submitted. 
 
@@ -162,7 +162,7 @@ const transaction = await client.contractMethods.executeBatchAsDelegator({
 
 ## Validation And Safety Checks
 
-- Validate address formats and numeric string inputs before execute calls.
+- Validate address formats (`0x` hex for these EVM contract methods) and numeric string inputs before execute calls.
 - For delegated paths, validate delegation scope and expiration first.
-- Use `atomic: true` only when all calls must succeed together, however this requires .
+- Batches default to `atomic: true`: every call must succeed or the whole batch is rolled back. With `atomic: false`, calls that succeed complete, but no call after the first failure is executed.
 - Do not log raw secrets, signatures, or full delegation payloads.

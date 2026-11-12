@@ -8,7 +8,7 @@ This section is aligned to the SDK README Server Wallets methods and naming.
 
 From the repository outline:
 
-- list available EVM networks
+- list available networks (EVM chains, and Solana as chain ids -1 and -2)
 - create server wallet
 - list server wallets
 - update wallet metadata
@@ -55,9 +55,11 @@ for (const chain of response) {
 }
 ```
 
-Use this when selecting valid `chainId` values for wallet creation and transaction flows.
+Use this when selecting valid `chainId` values for wallet creation and transaction flows. Solana chains have negative ids (`-1` mainnet, `-2` devnet) and `chain.chainTechnology === 1`; their wallets have base58 addresses and lamport balances. See [solana.md](solana.md) for Solana wallets and SOL transfers. Sections 2 and 6-7 below are EVM-only.
 
 ## 2) Fetch Current Gas Fees
+
+EVM chains only; `getFees` rejects Solana chain ids.
 
 ```ts
 const fees = await client.chains.getFees(8453); // Base mainnet
@@ -112,6 +114,8 @@ const updated = await client.wallets.update(walletId, {
 ```
 
 ## 6) Get Signatures From Server Wallets
+
+EVM wallets only. Signatures, Permit2 and delegations are not available for Solana wallets.
 
 ### EIP-3009
 
@@ -205,7 +209,7 @@ const { parent, redelegation } =
 
 - Always fetch supported chains and reject unknown `chainId` values before wallet creation.
 - Resolve gas fees from `client.chains.getFees(chainId)` right before execution/simulation if gas price is a concern.
-- Validate chain ID and address formatting before create/sign/delegation operations.
+- Validate chain ID and address formatting before create/sign/delegation operations: `0x` hex on EVM chains, base58 on Solana chains (negative chain ids).
 - Do not log API secrets, delegation payloads, or raw signatures.
 - Persist returned delegation IDs for future `redelegate` and delegated execution flows.
 - Add expiry checks (`endTime`) before using old delegation records.
