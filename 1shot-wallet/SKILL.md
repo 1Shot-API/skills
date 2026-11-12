@@ -162,6 +162,8 @@ await proxy.rpc("configure", options);
 | `copy.passkeyName.emptyError` | string | empty-name validation error |
 | `copy.passkeyName.cancelLabel` | string | Cancel button |
 | `copy.passkeyName.continueLabel` | string | Continue button |
+| `copy.passkeyName.termsOfServiceUrl` | string (http(s) URL) | Terms of Service link |
+| `copy.passkeyName.privacyPolicyUrl` | string (http(s) URL) | Privacy Policy link |
 | `copy.personalSign.title` | string | personal_sign modal title |
 | `copy.personalSign.accountLabel` | string | Account field label |
 | `copy.personalSign.messageLabel` | string | Message field label |
@@ -227,11 +229,9 @@ await proxy.rpc("configure", options);
 | `copy.credentials.claimsEmpty` | string | no claims text |
 | `copy.credentials.closeLabel` | string | Close button |
 | `copy.exportPrivateKey.title` | string | export private key modal title |
-| `copy.exportPrivateKey.body` | string | risk warning body |
 | `copy.exportPrivateKey.continueLabel` | string | confirm export button |
 | `copy.exportPrivateKey.cancelLabel` | string | Cancel button |
 | `copy.exportPrivateKey.closeLabel` | string | Close button |
-| `copy.exportPrivateKey.revealingBody` | string | shown while passkey / key UI is open |
 | `copy.exportPrivateKey.cancelledError` | string | passkey cancelled |
 | `copy.exportPrivateKey.failedError` | string | generic failure |
 | `copy.importPrivateKey.title` | string | import private key modal title |
@@ -258,6 +258,12 @@ await proxy.rpc("configure", options);
 Returns `{ ok: true, productName: string }` with the resolved product name after merge.
 
 Unknown keys are rejected (Zod `.strict()`).
+
+**Wallet-owned copy (not configurable).** Risk warnings are always rendered from the wallet's own strings, and a patch that includes any of them is rejected as `Invalid params`: `copy.solanaSignAndSend.simulationWarning`, `copy.solanaSignAndSend.durableNonceWarning`, `copy.siwe.domainMismatchWarning`, `copy.siws.domainMismatchWarning`, `copy.grantKitScopeTerms.ownershipWarning`, `copy.grantLiFiApprovePermission.warning`, `copy.cancelDelegation.skipOnchainAcknowledgement`, `copy.balances.addConfirmWarning`, `copy.exportPrivateKey.body`, `copy.exportPrivateKey.revealingBody`. The host is the party requesting those actions, so it cannot soften the warning about them. These strings render in a fixed amber warning box whose colours are not taken from `theme`, so a host theme cannot blend them into the card.
+
+**Requester identity.** Consent modals name the requesting site from the browser-set origin of the Postmate handshake (the Host page's origin as the browser reports it) and show it in a wallet-owned badge next to any custom body text. `{domain}` placeholders resolve to the same value; a host cannot substitute another domain, and `Referrer-Policy` on the Host page has no effect. The wallet only accepts the handshake from its direct parent window — a sibling frame or an opener that races the parent is ignored — and an embedded wallet whose host is still unknown shows `unknown`, never its own hostname.
+
+**Sign-in domain check.** For SIWE (`personal_sign` / typed-data shaped) and SIWS (`solana.signIn`), the wallet compares the message `domain` with the requesting site. When they differ (or the requester is unknown), the consent modal shows the wallet-owned mismatch warning naming both sites; the user can still sign. Build sign-in messages with `domain` equal to the page's hostname (port is ignored).
 
 See also the [embedded-wallet README](https://github.com/1Shot-API/embedded-wallet/blob/main/README.md).
 
@@ -471,7 +477,7 @@ Returns `{ upgraded: boolean, codeAddress?: EVMContractAddress, error?: string }
 
 ## Custom RPC — `bridge`
 
-Opens the CCTP USDC bridge (Circle Forwarding Service). **EVM source** burns via TokenMessengerV2 + the 1Shot relayer (gasless USDC fee). **Solana source** burns via Kit/Alchemy (user pays SOL; no relayer fee UI). Locked wallet → error. Cancel before success → `OwsUserRejectedError`. Execute failure → thrown error. Flyout stays open through burn + Iris mint polling; host `bridge` RPC hides only when the modal settles (`Done` / cancel via `requestDisplay` / `hide`). EVM → Solana to this wallet’s Solana address auto-tracks dest USDC. Omit `sourceChainId` to use the session chain.
+Opens the CCTP USDC bridge (Circle Forwarding Service). **EVM source** burns via TokenMessengerV2 + the 1Shot relayer (gasless USDC fee). **Solana source** burns via Kit/Alchemy (user pays SOL; no relayer fee UI). Locked wallet → error. Cancel before success → `OwsUserRejectedError`. Execute failure → thrown error. Flyout stays open through burn + Iris mint polling; host `bridge` RPC hides only when the modal settles (`Done` / cancel via `requestDisplay` / `hide`). EVM → Solana to this wallet’s Solana address auto-tracks dest USDC right after burn (reuses RelayerAuth from the burn ceremony; no second passkey when already tracked or when Circle creates the ATA). Omit `sourceChainId` to use the session chain.
 
 When `amount`, `destinationChainId`, and `speed` are all provided, the wallet skips the setup form, auto-quotes, and shows the confirmation screen only (secondary action is **Cancel**). Partial params open setup with those values as defaults.
 
@@ -531,6 +537,28 @@ const result = await proxy.rpc("requestCancelDelegations", {
 
 User reject → `OwsUserRejectedError`. Prefer this over `wallet_revokeExecutionPermission` when canceling multiple grants or when the host should not touch permissions it did not receive.
 
+## Where the wallet can be embedded
+
+The wallet completes the Postmate handshake only with a **web page that is its
+direct parent frame**. It refuses, before Postmate sees the message:
+
+- any handshake while the wallet is open as a **top-level page** — a site that
+  `window.open`s the wallet cannot drive it;
+- a handshake from a window other than `window.parent` (sibling frame, opener);
+- a **browser-extension** embedder (`chrome-extension:`, `moz-extension:`,
+  `safari-web-extension:`) or an opaque (`null`) origin.
+
+A refused embedder simply never connects: `OWSProxy.create` does not resolve.
+Embed the wallet with `OWSProxy` from a normal `https://` page (or
+`http://localhost` in development).
+
+Browser-extension hosting is **shelved**. Any installed extension could frame
+the wallet and the wallet cannot tell which one it is, so it could make the
+wallet name any site on consent screens. The former `forwardEip1193` RPC was
+removed with it. Supporting extensions again needs a different trust model
+(for example pinned published extension ids) — see `extension/README.md` in
+embedded-wallet.
+
 ## Other Host APIs
 
 | API | Use |
@@ -587,7 +615,7 @@ The same rich payload is POSTed fire-and-forget to `POST /wallet/product-events`
 `userAgent` props). The local Host (`host/`) and marketing [wallet playground](https://www.1shotapi.com/playground)
 include a live Analytics panel fed by `proxy.analytics.on` (filter by `name`).
 
-EIP-7715 host RPCs: `wallet_requestExecutionPermissions`, `wallet_revokeExecutionPermission` (single `permissionContext`), `wallet_getSupportedExecutionPermissions`, `wallet_getGrantedExecutionPermissions`. For batch / domain-scoped cancel from a host, use custom RPC `requestCancelDelegations` with the grant `context` values. See **EIP-7715 delegation creation** below.
+EIP-7715 host RPCs: `wallet_requestExecutionPermissions`, `wallet_revokeExecutionPermission` (single `permissionContext`), `wallet_getSupportedExecutionPermissions`, `wallet_getGrantedExecutionPermissions`. Grants are scoped to the requesting site: `wallet_getGrantedExecutionPermissions` returns only grants made to the calling host's domain, and `wallet_revokeExecutionPermission` / `requestCancelDelegations` reject a `permissionContext` another host holds with `Invalid params`. For batch / domain-scoped cancel from a host, use custom RPC `requestCancelDelegations` with the grant `context` values. See **EIP-7715 delegation creation** below.
 
 ## Relayer integration (when the host submits txs)
 
