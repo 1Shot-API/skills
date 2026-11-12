@@ -180,6 +180,11 @@ await proxy.rpc("configure", options);
 | `copy.typedData.signingHint` | string | Hint shown while signing |
 | `copy.typedData.rejectLabel` | string | Reject button |
 | `copy.typedData.signLabel` | string | Sign button |
+| `copy.clearSigning.moreDetailsLabel` | string | ERC-7730 view: disclosure for optional fields |
+| `copy.clearSigning.rawTransactionLabel` | string | ERC-7730 view: collapsed raw to / value / data |
+| `copy.clearSigning.rawMessageLabel` | string | ERC-7730 view: collapsed raw EIP-712 message |
+| `copy.clearSigning.nativeValueLabel` | string | ERC-7730 view: native value the descriptor does not show |
+| `copy.clearSigning.provenanceText` | string | ERC-7730 view: registry provenance footer |
 | `copy.grantExecutionPermission.title` | string | ERC-20 periodic grant modal title |
 | `copy.grantExecutionPermission.permissionKindLabel` | string | Summary card eyebrow |
 | `copy.grantExecutionPermission.amountLabel` | string | Summary amount row |
@@ -620,6 +625,7 @@ EIP-7715 host RPCs: `wallet_requestExecutionPermissions`, `wallet_revokeExecutio
 ## Relayer integration (when the host submits txs)
 
 - **Default sends:** `eth_sendTransaction` through OWSProxy — the wallet signs delegations and calls `relayer_*` internally. The host does **not** implement a relayer JSON-RPC client.
+- **Clear signing (ERC-7730):** for contract calls and EIP-712 messages with a descriptor in the [ERC-7730 registry](https://github.com/ethereum/clear-signing-erc7730-registry), the consent modal shows an intent ("Swap", "Authorize spending of tokens") and labeled, decoded fields instead of raw calldata; otherwise the raw view. Hosts need no integration. Get your contracts listed by contributing descriptors to the registry.
 - **Delegated execution (Path B):** when the host or backend will **redeem** a user grant via public relayer JSON-RPC, also install the **`public-relayer`** skill.
   - **B1 direct:** grant **`to: relayer targetAddress`** → Example 0b in **`public-relayer/references/examples.md`**.
   - **B2 session key (recommended):** grant **`to: host session account`**, redelegate **`to: targetAddress`**, submit delegation chain → Example 0c.

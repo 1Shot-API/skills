@@ -54,6 +54,7 @@ Details: [references/architecture.md](references/architecture.md)
 | `@1shotapi/ows-wallet-utils` | Branding ↔ Host (`OWSWallet`, `RpcHelper`, `requestDisplay`) |
 | `@1shotapi/ows-signer-utils` | Branding ↔ Signing (`OWSSigner`, `SignHelper`, `showSignerCeremonyPanel`) |
 | `@1shotapi/ows-oid4` | Optional credentials (`CredentialsHelper`, HTTP OID4VCI/OID4VP clients) |
+| `@1shotapi/ows-clear-signing` | Optional ERC-7730 clear signing (`ClearSigningUtils` lookup keys, `ClearSigningFormatter`) |
 | `@1shotapi/ows-signer` | Plain JS Signing Layer sources (serve as static `/signer/`) |
 
 ```bash
@@ -64,6 +65,7 @@ npm install \
   @1shotapi/ows-oid4 \
   viem
 # zod is transitive via ows-wallet-utils — add a direct dep only for custom registerRpc schemas
+# Optional: @1shotapi/ows-clear-signing for ERC-7730 clear signing (viem peer)
 # Required: serve ows-signer HTML+JS on the same origin as branding (/signer/; CSP frame-ancestors 'self')
 ```
 
@@ -83,6 +85,7 @@ Branding Layer Progress:
 - [ ] 6. Recovery — create/restore via `OWSSigner` auto ceremony panel (no iframe reparent)
 - [ ] 7. Credentials — CredentialsHelper + branding `approveAndAcceptOffer` / `approveAndPresent` (optional)
 - [ ] 8. EIP-7715 permissions — optional RpcHelper `executionPermissions` hooks (UI in your app; see embedded-wallet)
+- [ ] 9. Clear signing — optional ERC-7730: lookup key → relayer `/clear-signing/*` → `ClearSigningFormatter`, generic consent UI as fallback
 ```
 
 Task details + exact example paths: [references/tasks.md](references/tasks.md)

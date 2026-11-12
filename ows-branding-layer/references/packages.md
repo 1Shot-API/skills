@@ -19,6 +19,7 @@ Notes:
 - Solana chain ids in `ows-types` are CAIP-2 / Wallet Standard (`solana:mainnet`, `solana:devnet`, …). Host `proxy.solana.*` forwards wire methods; hosts opt in to discovery with `proxy.solana.registerSolanaWallet()` (Wallet Standard on the Host window — not auto-registered in `OWSProxy.create`).
 - `postmate` and `zod` are **transitive** via `ows-wallet-utils` — do not vendor Postmate; add a direct `zod` dep only if you author custom `registerRpc` schemas.
 - `@1shotapi/ows-signer` is plain JS sources. Prefer **copy or static-serve** into your app (no build step). Same origin as branding so `rpId === location.hostname`. Consuming it solely as an npm import of TS modules is not the reference pattern.
+- `@1shotapi/ows-clear-signing` is optional (ERC-7730 clear signing); `viem` is its peer. Descriptor types and `ClearSigningLookupResultSchema` live in `ows-types`.
 - `@1shotapi/ows-provider` is for **host** apps only — omit from a branding-only package unless the same origin also serves a demo host.
 
 Until packages are on npm, depend via workspace, `file:`, or git:
@@ -37,6 +38,7 @@ npm install ../open-wallet/packages/ows-types
 
 | `ows-signer-utils` | `OWSSigner`, `SignHelper`, `showSignerCeremonyPanel`, `evm.*`, `solana.*` (`signMessage` / `signTransaction`, optional `toKitPartialSigner`) | Nested signer iframe, consent→sign wiring, digests → signatures |
 | `ows-oid4` | `CredentialsHelper`, `issueCredentialAfterApproval`, `presentCredentialAfterApproval`, HTTP OID4 clients | Thin accept/present adapter + branding `approveAnd*` ownership |
+| `ows-clear-signing` (optional) | `ClearSigningUtils` (`calldataLookupKey`, `eip712LookupKey`), `ClearSigningFormatter`, `IClearSigningEnvironment` | ERC-7730 clear-sign consent: registry lookup keys, descriptor verification, decoding + field formatting (see tasks §9) |
 | `ows-signer` | static files | Custody kernel under `/signer/` |
 
 There is **no** branding-core / registry package. App-local UI and wiring live in your repo (see `examples/general-wallet/src/ows/`).
