@@ -54,6 +54,7 @@ Details: [references/architecture.md](references/architecture.md)
 | `@1shotapi/ows-wallet-utils` | Branding ↔ Host (`OWSWallet`, `RpcHelper`, `requestDisplay`) |
 | `@1shotapi/ows-signer-utils` | Branding ↔ Signing (`OWSSigner`, `SignHelper`, `showSignerCeremonyPanel`) |
 | `@1shotapi/ows-oid4` | Optional credentials (`CredentialsHelper`, HTTP OID4VCI/OID4VP clients) |
+| `@1shotapi/ows-clear-signing` | Optional ERC-7730 clear signing (`ClearSigningUtils` lookup keys, `ClearSigningFormatter`) |
 | `@1shotapi/ows-signer` | Plain JS Signing Layer sources (serve as static `/signer/`) |
 
 ```bash
@@ -64,6 +65,7 @@ npm install \
   @1shotapi/ows-oid4 \
   viem
 # zod is transitive via ows-wallet-utils — add a direct dep only for custom registerRpc schemas
+# Optional: @1shotapi/ows-clear-signing for ERC-7730 clear signing (viem peer)
 # Required: serve ows-signer HTML+JS on the same origin as branding (/signer/; CSP frame-ancestors 'self')
 ```
 
@@ -83,6 +85,7 @@ Branding Layer Progress:
 - [ ] 6. Recovery — create/restore via `OWSSigner` auto ceremony panel (no iframe reparent)
 - [ ] 7. Credentials — CredentialsHelper + branding `approveAndAcceptOffer` / `approveAndPresent` (optional)
 - [ ] 8. EIP-7715 permissions — optional RpcHelper `executionPermissions` hooks (UI in your app; see embedded-wallet)
+- [ ] 9. Clear signing — optional ERC-7730: lookup key → relayer `/clear-signing/*` → `ClearSigningFormatter`, generic consent UI as fallback
 ```
 
 Task details + exact example paths: [references/tasks.md](references/tasks.md)
@@ -195,6 +198,11 @@ Host `addAsset` accepts Solana CAIP + mint; Branding should resolve **catalog mi
 5. Do not vendor Postmate — use the `postmate` package (transitive).
 6. Do **not** reparent the signer iframe. Passphrase / Confirm UI is shown by `OWSSigner` via `showSignerCeremonyPanel` (bottom ceremony strip). Prefer that over manual `overlaySignerIframe`.
 7. Prefer Vite `/signer/` at **origin root** even if the branding app uses a subpath `base` (e.g. `/wallet/`).
+8. **Name the requester from the browser, not the page.** Derive the Host domain shown on consent UI from the Postmate handshake `event.origin` (the message from `window.parent`) or `location.ancestorOrigins`; never from `document.referrer`, which the Host can blank with `Referrer-Policy`. Render it in a wallet-owned element, not only inside host-configurable copy.
+9. **Risk warnings are not host-configurable.** Strings that warn about a host-initiated action (failed simulation, durable nonce, ownership transfer, uncapped approvals, private-key export, sign-in domain mismatch) stay wallet-owned — the Host is the party asking and must not be able to soften them. Render them in a box with **fixed, literal colours**, not `theme` tokens, so a host theme cannot blend the warning into the card.
+10. **Only the parent may complete the Postmate handshake.** Postmate's child accepts the first `handshake` from any window and never checks `event.source`, so a sibling frame or the page that opened the dapp can race the parent and become the RPC peer. Register a `message` listener before `OWSWallet.start()` and call `event.stopImmediatePropagation()` on any handshake whose `event.source !== window.parent`. Install it **even when the wallet is top-level** and refuse every handshake there: otherwise a page that `window.open`s the wallet becomes the RPC peer inside the user's session. Refuse opaque (`null`) and browser-extension embedder origins too — any extension can frame the wallet and you cannot tell which one. While the host is unknown, show `unknown` — never the wallet's own hostname.
+11. **Compare sign-in domains with the requester.** For SIWE (EIP-4361, `personal_sign` or typed data) and SIWS (CAIP-122), compare the message `domain` with the browser-attested host domain and show a wallet-owned warning naming both when they differ. `{domain}` in sign-in copy is the requester, not the message's domain.
+12. **Scope grants by host.** `wallet_getGrantedExecutionPermissions` returns only grants whose stored `hostDomain` is the requester's; revoke / cancel reject another host's `permissionContext`. Do not accept a host-relayed requester origin: the 1Shot wallet removed its extension relay (`forwardEip1193`) because a scheme check cannot tell which extension is relaying. Re-adding one needs a verified relay identity (e.g. pinned extension ids).
 
 ## Reference implementation
 

@@ -225,3 +225,45 @@ Reference stack:
 Do **not** call `PresentationUtils` / low-level SD-JWT helpers unless you bypass `CredentialsHelper`. Holder KB JWT lives in `createCredentialsHolderSigner` / `CredentialCryptoUtils` (`@1shotapi/ows-types`).
 
 Host demos: `examples/credential-issuer`, `examples/credential-verifier` (use `ows-provider`; `allowLocalAccess` is host-only). Do not call `proxy.showWallet()` before issue/present — `CredentialsHelper` `requestDisplay` opens the host panel.
+
+## 9. Clear signing (ERC-7730, optional)
+
+Show known contract calls and EIP-712 messages as an intent plus labeled fields instead of raw calldata. The 1Shot relayer resolves descriptors from the official registry (`ethereum/clear-signing-erc7730-registry`); `@1shotapi/ows-clear-signing` decodes and formats them locally.
+
+```
+approveAndSign* → ClearSigningUtils.calldataLookupKey / eip712LookupKey
+  → GET {relayer}/clear-signing/calldata | /clear-signing/eip712   (parse: ClearSigningLookupResultSchema)
+  → ClearSigningFormatter.formatCalldata / formatTypedData
+  → clear-sign consent UI        (null key, miss, error, timeout, ClearSigningError → generic UI)
+```
+
+Relayer routes (public, rate-limited, cacheable for 1 h; production `https://relayer.1shotapi.com`, dev `https://relayer.1shotapi.dev`):
+
+- `GET /clear-signing/calldata?chainId=<hex|dec>&address=<0x…>&selector=<0x + 8 hex>`
+- `GET /clear-signing/eip712?chainId=<hex|dec>&verifyingContract=<0x…>&primaryType=<name>&encodeTypeHash=<0x + 64 hex>`
+
+Both answer `{ found: true, registrySha, path, descriptor }` or `{ found: false }`. Pass the lookup key fields straight through as query params.
+
+Rules:
+
+- **Never block consent.** Time-box the lookup (about 2 s), treat every failure as a miss, and keep the generic consent UI as the fallback. Cache answers for the session.
+- **Never trust the descriptor.** Parse with `ClearSigningLookupResultSchema` and render only through `ClearSigningFormatter`. It re-checks the deployment binding, selector / `encodeType`, and EIP-712 domain, and decodes values itself, so a bad resolver can at worst mislabel. Its `ClearSigningError` means "fall back", not "reject the request".
+- **Keep classification order.** SIWE and any dedicated ERC-20 transfer UI run first; clear signing replaces only the generic transaction / typed-data view.
+- **Show attached native value** when no descriptor field has kind `NativeAmount`, and keep the raw view reachable (collapsed).
+- **`IClearSigningEnvironment` is yours to implement:** token metadata (local registry, then on-chain `symbol` / `decimals`, cached and time-boxed), native currency, chain name, address names. Return `null` when unknown; the formatter shows raw values with a warning.
+
+```typescript
+import { ClearSigningFormatter, ClearSigningUtils } from "@1shotapi/ows-clear-signing";
+
+const formatter = new ClearSigningFormatter(environment);
+const key = ClearSigningUtils.calldataLookupKey(chainId, to, data); // null → no selector
+const found = key ? await lookupCalldata(key) : null; // fetch + timeout + schema parse; null on any failure
+const display = found
+  ? await formatter
+      .formatCalldata(found.descriptor, { chainId, from, to, data, value })
+      .catch(() => null)
+  : null;
+// display ? clear-sign modal (title = display.intent, rows = display.fields) : generic modal
+```
+
+Reference (embedded-wallet): `src/lib/implementations/business/ClearSigningService.ts`, `src/lib/implementations/data/RelayerClearSigningRepository.ts`, `src/lib/implementations/utils/ClearSigningEnvironment.ts`, `src/components/modals/ClearSigningDetails.tsx`, and the `describeTransaction` / `describeTypedData` branches in `src/wallet/useWalletBoot.ts`.
