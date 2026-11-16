@@ -1,8 +1,9 @@
 ---
 name: 1shot-wallet
 description: >-
-  Integrate the 1Shot embedded wallet (OWS Host Layer) with @1shotapi/ows-provider.
-  Use when embedding wallet.1shotapi.com, wiring OWSProxy, EIP-1193, credentials,
+  Integrate the 1Shot embedded wallet (OWS Host Layer) with @1shotapi/ows-provider
+  or the wagmi connector (@1shotapi/wagmi-connector, oneShotWallet()).
+  Use when embedding wallet.1shotapi.com, wiring OWSProxy or wagmi, EIP-1193, credentials,
   EIP-7715 wallet_requestExecutionPermissions (delegation creation, host rules[]
   stacking, LiFi / Chainlink price rules), or custom RPC such as configure /
   switchChain / focusWallet / addAsset / createAccount / onramp / bridge /
@@ -11,7 +12,7 @@ description: >-
 license: MIT
 metadata:
   author: 1Shot-API
-  version: "0.3.3"
+  version: "0.4.0"
   repository: https://github.com/1Shot-API/skills
 ---
 
@@ -119,6 +120,56 @@ Switch the wallet to the target Solana cluster (`switchChain` / UI) before signi
 - Dev wallet URL: your ngrok or local Vite origin root (e.g. `https://….ngrok-free.app/`).
 - Production wallet URL: **`https://wallet.1shotapi.com/`** (Signing Layer at `/signer/` on the same origin — do not embed `/signer/` from the host). Branding and Signing are same-origin only; `/signer/` is served with `frame-ancestors 'self'`.
 - Safari / iOS WebKit cannot create passkeys inside a **cross-origin** wallet iframe. The branding layer detects this and opens **`https://wallet.1shotapi.com/create/`** in a new tab (same origin as the wallet). Allow pop-ups from the embedding page so that handoff can complete; no host code changes are required.
+
+## wagmi apps — `oneShotWallet()` connector
+
+If the host already uses **wagmi v3**, prefer the connector over hand-wiring `OWSProxy`. It creates the Branding iframe lazily (dynamic import of `@1shotapi/ows-provider/evm`, ~7 KB gzip — no Solana / credentials code) and hands its EIP-1193 provider to wagmi.
+
+```bash
+npm install @1shotapi/wagmi-connector @1shotapi/ows-provider wagmi viem @tanstack/react-query
+```
+
+```typescript
+import { oneShotWallet } from "@1shotapi/wagmi-connector";
+import { createConfig, http } from "wagmi";
+import { base } from "wagmi/chains";
+
+export const config = createConfig({
+  chains: [base],
+  connectors: [
+    oneShotWallet({
+      // walletUrl?: string            default https://wallet.1shotapi.com
+      // container?: HTMLElement | () => HTMLElement   default: appended <div data-one-shot-wallet>
+      // presentationMode?: "flyout" | "inline"        default "flyout"
+      // walletSizeX?, walletSizeY?    flyout size (default 360 × 600)
+      // configure?: configure payload, applied once after the iframe loads
+    }),
+  ],
+  transports: { [base.id]: http() },
+});
+```
+
+| Behavior | Detail |
+|----------|--------|
+| Identity | `id: "oneShotWallet"`, `type: "oneShotWallet"`, `rdns: "com.1shotapi.wallet"` |
+| Connect | `eth_requestAccounts` → wallet Connect screen + passkey. Reject → wagmi `UserRejectedRequestError` (4001). |
+| Reconnect | `eth_accounts` (silent) while the host's `eth_accounts` permission is granted |
+| Disconnect | EIP-2255 `wallet_revokePermissions [{ eth_accounts: {} }]` — next reload stays disconnected until the user approves again |
+| Switch chain | `wallet_switchEthereumChain`; a chain the wallet does not support (4902) fails with `SwitchChainError` — the wallet does not implement `wallet_addEthereumChain` |
+| Events | `accountsChanged` (empty → disconnect), `chainChanged` (non-EVM ids like `Bitcoin` / `solana:*` are ignored) |
+| SSR | Safe: no `window` access until connect / reconnect runs in the browser |
+
+Host RPCs (`configure`, `focusWallet`, `onramp`, `bridge`, …) are reached through the connector's `getProxy()`:
+
+```typescript
+import type { OWSProxyCore } from "@1shotapi/ows-provider/evm";
+
+const oneShot = config.connectors.find((c) => c.id === "oneShotWallet");
+const proxy = await (oneShot as unknown as { getProxy(): Promise<OWSProxyCore> }).getProxy();
+await proxy.rpc("focusWallet", { chainId: "0x2105", assetAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" });
+```
+
+Non-wagmi hosts that only need EVM can also import `OWSProxyCore` from `@1shotapi/ows-provider/evm` directly (same API as `OWSProxy` minus `solana` / `bitcoin` / `credentials`).
 
 ## Custom RPC — `configure`
 
@@ -542,6 +593,14 @@ User reject → `OwsUserRejectedError`. Prefer this over `wallet_revokeExecution
 | `proxy.rpc(method, params)` | Custom Branding RPC (`configure`, `switchChain`, `getChainId`, `focusWallet`, `unfocusWallet`, `addAsset`, `createAccount`, `onramp`, `getUpgraded`, `bridge`, `requestCancelDelegations`, …) |
 | `proxy.analytics.on(listener)` / `.on(name, listener)` / `.off(listener)` | Branding→Host product analytics (`ows:analytics`) |
 
+EIP-2255 account permissions:
+
+| Method | Behavior |
+|--------|----------|
+| `wallet_requestPermissions [{ eth_accounts: {} }]` | Same consent as `eth_requestAccounts`; returns granted permissions |
+| `wallet_getPermissions` | Currently granted permissions for this host (no prompt) |
+| `wallet_revokePermissions [{ eth_accounts: {} }]` | Forgets this host's `eth_accounts` grant (no prompt), emits `accountsChanged([])`, returns `null`. Use as the host's "Disconnect" — `eth_accounts` then returns `[]` until the user approves again. |
+
 Subscribe so in-wallet chain/account changes update host UI without polling:
 
 ```typescript
@@ -592,6 +651,7 @@ EIP-7715 host RPCs: `wallet_requestExecutionPermissions`, `wallet_revokeExecutio
 ## Relayer integration (when the host submits txs)
 
 - **Default sends:** `eth_sendTransaction` through OWSProxy — the wallet signs delegations and calls `relayer_*` internally. The host does **not** implement a relayer JSON-RPC client.
+- **Batched sends (EIP-5792):** `wallet_sendCalls` (version `"2.0.0"`) returns `{ id }` when the relayer accepts the task. Poll `wallet_getCallsStatus` and open `wallet_showCallsStatus` for that id. `wallet_getCapabilities` reports `atomic.status` of `ready` or `supported` on enabled EVM relayer chains (one ExactCalldata delegation per call, redeemed together, so the batch reverts as a whole). There is no `paymasterService`. `eth_sendTransaction` still waits for a transaction hash.
 - **Delegated execution (Path B):** when the host or backend will **redeem** a user grant via public relayer JSON-RPC, also install the **`public-relayer`** skill.
   - **B1 direct:** grant **`to: relayer targetAddress`** → Example 0b in **`public-relayer/references/examples.md`**.
   - **B2 session key (recommended):** grant **`to: host session account`**, redelegate **`to: targetAddress`**, submit delegation chain → Example 0c.

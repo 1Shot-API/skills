@@ -52,7 +52,7 @@ Guides a coding agent in building a TypeScript project that leverages the [1Shot
 
 ### `1shot-wallet`
 
-Guides a coding agent in embedding the **1Shot Wallet** from a Host Layer app using `@1shotapi/ows-provider`. The hosted Branding Layer at `wallet.1shotapi.com` handles passkey onboarding, signing consent, and credentials — your app wires `OWSProxy`, EIP-1193, and optional `configure` theming without building a wallet from scratch.
+Guides a coding agent in embedding the **1Shot Wallet** from a Host Layer app using `@1shotapi/ows-provider`. The hosted Branding Layer at `wallet.1shotapi.com` handles passkey onboarding, signing consent, and credentials — your app wires `OWSProxy`, EIP-1193, and optional `configure` theming without building a wallet from scratch. wagmi apps can instead add the `oneShotWallet()` connector from `@1shotapi/wagmi-connector`.
 
 ### `public-relayer`
 
